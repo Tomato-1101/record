@@ -27,7 +27,9 @@ class WhisperTranscriber:
         temperature: float = 0.0,
         max_retries: int = 3,
         sample_rate: int = 16000,
-        channels: int = 1
+        channels: int = 1,
+        prompt_template: str = "",
+        use_context: bool = False
     ):
         """
         Whisperクライアントの初期化
@@ -40,6 +42,8 @@ class WhisperTranscriber:
             max_retries: 最大リトライ回数
             sample_rate: サンプルレート（Hz）
             channels: チャンネル数
+            prompt_template: プロンプトテンプレート
+            use_context: 前チャンクをコンテキストとして使用
         """
         self.api_key = api_key
         self.model_name = model_name
@@ -48,6 +52,9 @@ class WhisperTranscriber:
         self.max_retries = max_retries
         self.sample_rate = sample_rate
         self.channels = channels
+        self.prompt_template = prompt_template
+        self.use_context = use_context
+        self.previous_text = ""
 
         # Groqクライアント
         self.client = Groq(api_key=api_key)
@@ -109,14 +116,24 @@ class WhisperTranscriber:
                 audio_file = io.BytesIO(wav_data)
                 audio_file.name = "audio.wav"  # ファイル名が必要
 
+                # プロンプト構築
+                prompt = self.prompt_template if self.prompt_template else ""
+                if self.use_context and self.previous_text:
+                    context = self.previous_text[-50:]  # 最後の50文字
+                    prompt = f"{prompt}\n前の発話: {context}" if prompt else f"前の発話: {context}"
+
                 # Whisper API呼び出し
-                response = self.client.audio.transcriptions.create(
-                    model=self.model_name,
-                    file=audio_file,
-                    language=self.language,
-                    temperature=self.temperature,
-                    response_format="text"
-                )
+                api_params = {
+                    "model": self.model_name,
+                    "file": audio_file,
+                    "language": self.language,
+                    "temperature": self.temperature,
+                    "response_format": "text"
+                }
+                if prompt:
+                    api_params["prompt"] = prompt
+
+                response = self.client.audio.transcriptions.create(**api_params)
 
                 self.total_requests += 1
 
@@ -127,6 +144,8 @@ class WhisperTranscriber:
                     text = response.text.strip() if hasattr(response, "text") else ""
 
                 if text:
+                    # 前チャンクとして保存
+                    self.previous_text = text
                     logger.info(
                         f"Transcription success: {len(text)} chars at {timestamp:.2f}s"
                     )

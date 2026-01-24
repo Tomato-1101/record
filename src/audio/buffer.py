@@ -27,7 +27,8 @@ class AudioBufferManager:
         on_chunk_ready: Optional[Callable[[bytes, float], None]] = None,
         vad_enabled: bool = False,
         vad_aggressiveness: int = 2,
-        queue_maxsize: int = 20
+        queue_maxsize: int = 20,
+        chunk_overlap_sec: int = 5
     ):
         """
         バッファマネージャの初期化
@@ -40,6 +41,7 @@ class AudioBufferManager:
             vad_enabled: VADを有効化するか
             vad_aggressiveness: VAD感度（0-3）
             queue_maxsize: キューの最大サイズ
+            chunk_overlap_sec: チャンクオーバーラップ（秒）
         """
         self.chunk_duration_sec = chunk_duration_sec
         self.sample_rate = sample_rate
@@ -49,6 +51,11 @@ class AudioBufferManager:
         # チャンクサイズ（バイト数）
         # 16bit (2 bytes) * sample_rate * channels * duration
         self.chunk_size_bytes = 2 * sample_rate * channels * chunk_duration_sec
+
+        # オーバーラップ設定
+        self.overlap_duration_sec = chunk_overlap_sec
+        self.overlap_size_bytes = 2 * sample_rate * channels * chunk_overlap_sec
+        self.previous_overlap = bytearray()
 
         # バッファ
         self.buffer = bytearray()
@@ -103,9 +110,13 @@ class AudioBufferManager:
 
             # チャンクサイズに達したら分割
             while len(self.buffer) >= self.chunk_size_bytes:
-                # memoryviewでゼロコピー操作
-                mv = memoryview(self.buffer)
-                chunk = bytes(mv[:self.chunk_size_bytes])
+                # 前チャンクのオーバーラップを含める
+                chunk_with_overlap = bytes(self.previous_overlap + self.buffer[:self.chunk_size_bytes])
+
+                # 次回用のオーバーラップを保存（最後のN秒）
+                if self.overlap_size_bytes > 0:
+                    overlap_start = max(0, self.chunk_size_bytes - self.overlap_size_bytes)
+                    self.previous_overlap = self.buffer[overlap_start:self.chunk_size_bytes]
 
                 # インプレース削除でメモリコピーを削減
                 del self.buffer[:self.chunk_size_bytes]
@@ -114,7 +125,7 @@ class AudioBufferManager:
                 timestamp = self._get_current_timestamp()
 
                 try:
-                    self.chunk_queue.put_nowait((chunk, timestamp))
+                    self.chunk_queue.put_nowait((chunk_with_overlap, timestamp))
                     logger.debug(f"Chunk added to queue: {len(chunk)} bytes at {timestamp:.2f}s")
                 except queue.Full:
                     logger.warning("Chunk queue is full, dropping oldest chunk")

@@ -26,7 +26,9 @@ class GPT4oTranscriber:
         enable_diarization: bool = False,
         max_retries: int = 3,
         sample_rate: int = 16000,
-        channels: int = 1
+        channels: int = 1,
+        prompt_template: str = "",
+        use_context: bool = False
     ):
         """
         GPT-4o クライアントの初期化
@@ -39,6 +41,8 @@ class GPT4oTranscriber:
             max_retries: 最大リトライ回数
             sample_rate: サンプルレート（Hz）
             channels: チャンネル数
+            prompt_template: プロンプトテンプレート
+            use_context: 前チャンクをコンテキストとして使用
         """
         self.api_key = api_key
         self.model_name = model_name
@@ -47,6 +51,9 @@ class GPT4oTranscriber:
         self.max_retries = max_retries
         self.sample_rate = sample_rate
         self.channels = channels
+        self.prompt_template = prompt_template
+        self.use_context = use_context
+        self.previous_text = ""
 
         # OpenAIクライアント
         self.client = OpenAI(api_key=api_key)
@@ -108,11 +115,21 @@ class GPT4oTranscriber:
                 audio_file = io.BytesIO(wav_data)
                 audio_file.name = "audio.wav"
 
+                # プロンプト構築
+                prompt = self.prompt_template if self.prompt_template else ""
+                if self.use_context and self.previous_text:
+                    context = self.previous_text[-50:]  # 最後の50文字
+                    prompt = f"{prompt}\n前の発話: {context}" if prompt else f"前の発話: {context}"
+
                 # API呼び出しパラメータ
                 params = {
                     "model": self.model_name,
                     "file": audio_file,
                 }
+
+                # プロンプトを追加
+                if prompt:
+                    params["prompt"] = prompt
 
                 # 話者分離が有効な場合はdiarized_jsonを使用
                 if self.enable_diarization:
@@ -138,6 +155,8 @@ class GPT4oTranscriber:
                         text = response.text.strip() if hasattr(response, "text") else ""
 
                 if text:
+                    # 前チャンクとして保存
+                    self.previous_text = text
                     logger.info(
                         f"Transcription success: {len(text)} chars at {timestamp:.2f}s"
                     )

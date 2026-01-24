@@ -203,6 +203,7 @@ class MainWindow(ctk.CTk):
         sample_rate = self.settings.get("audio.sample_rate", 16000)
         vad_aggressiveness = self.settings.get("vad.aggressiveness", 2)
         queue_maxsize = self.settings.get("audio.queue_maxsize", 20)
+        chunk_overlap = self.settings.get("transcription.chunk_overlap_sec", 5)
 
         # VADは常に有効
         self.buffer_manager = AudioBufferManager(
@@ -212,7 +213,8 @@ class MainWindow(ctk.CTk):
             on_chunk_ready=self._on_chunk_ready,
             vad_enabled=True,  # 常にON
             vad_aggressiveness=vad_aggressiveness,
-            queue_maxsize=queue_maxsize
+            queue_maxsize=queue_maxsize,
+            chunk_overlap_sec=chunk_overlap
         )
 
         # 録音デバイスの作成
@@ -246,7 +248,9 @@ class MainWindow(ctk.CTk):
                 language=language,
                 temperature=self.settings.get("transcription.whisper.temperature", 0.0),
                 sample_rate=sample_rate,
-                channels=channels
+                channels=channels,
+                prompt_template=self.settings.get("transcription.whisper.prompt_template", ""),
+                use_context=self.settings.get("transcription.whisper.use_context", False)
             )
 
         elif model in ["gpt-4o-transcribe", "gpt-4o-diarize"]:
@@ -263,7 +267,9 @@ class MainWindow(ctk.CTk):
                 language=language,
                 enable_diarization=enable_diarization,
                 sample_rate=sample_rate,
-                channels=channels
+                channels=channels,
+                prompt_template=self.settings.get("transcription.gpt4o.prompt_template", ""),
+                use_context=self.settings.get("transcription.gpt4o.use_context", False)
             )
 
     def _on_chunk_ready(self, audio_chunk: bytes, timestamp: float) -> None:
