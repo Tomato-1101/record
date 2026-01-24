@@ -14,6 +14,9 @@ from src.audio.recorder import AudioRecorder
 from src.audio.buffer import AudioBufferManager
 from src.transcription.whisper_client import WhisperTranscriber
 from src.transcription.gpt4o_client import GPT4oTranscriber
+from src.locales.locale_manager import get_locale_manager
+from src.gui.settings_dialog import SettingsDialog
+from src.utils.output_formatter import OutputFormatter, TranscriptBuilder
 
 
 class MainWindow(ctk.CTk):
@@ -27,9 +30,14 @@ class MainWindow(ctk.CTk):
         self.buffer_manager: Optional[AudioBufferManager] = None
         self.transcriber: Optional[any] = None
 
-        # 文字起こしテキスト
-        self.transcript_text = ""
+        # 文字起こしテキストビルダー
+        self.transcript_builder = TranscriptBuilder()
+        self.transcript_text = ""  # 後方互換性のため保持
         self.output_file_path: Optional[str] = None
+
+        # ローカライゼーションマネージャ
+        ui_language = self.settings.get("ui.language", "ja")
+        self.locale = get_locale_manager(ui_language)
 
         # UIのセットアップ
         self._setup_ui()
@@ -40,7 +48,7 @@ class MainWindow(ctk.CTk):
     def _setup_ui(self) -> None:
         """UIのセットアップ"""
         # ウィンドウ設定
-        self.title("議事録文字起こし")
+        self.title(self.locale.get("app_title"))
         self.geometry("900x700")
 
         # テーマ設定
@@ -70,12 +78,23 @@ class MainWindow(ctk.CTk):
         title_frame.grid(row=0, column=0, padx=10, pady=(10, 0), sticky="ew")
         title_frame.grid_propagate(False)
 
-        title_label = ctk.CTkLabel(
+        self.title_label = ctk.CTkLabel(
             title_frame,
-            text="📝 議事録文字起こし",
+            text=f"📝 {self.locale.get('app_title')}",
             font=ctk.CTkFont(size=20, weight="bold")
         )
-        title_label.pack(side="left", padx=20, pady=10)
+        self.title_label.pack(side="left", padx=20, pady=10)
+
+        # 言語切り替えボタン
+        self.language_button = ctk.CTkButton(
+            title_frame,
+            text=self.locale.get("btn_language"),
+            font=ctk.CTkFont(size=12),
+            width=80,
+            height=30,
+            command=self._toggle_language
+        )
+        self.language_button.pack(side="right", padx=20, pady=10)
 
     def _create_text_area(self) -> None:
         """テキスト表示エリアの作成"""
@@ -100,7 +119,7 @@ class MainWindow(ctk.CTk):
         # 録音時間
         self.time_label = ctk.CTkLabel(
             status_frame,
-            text="録音時間: 00:00:00",
+            text=f"{self.locale.get('label_duration')}: 00:00:00",
             font=ctk.CTkFont(size=12)
         )
         self.time_label.pack(side="left", padx=20)
@@ -108,7 +127,7 @@ class MainWindow(ctk.CTk):
         # 状態
         self.status_label = ctk.CTkLabel(
             status_frame,
-            text="状態: 待機中",
+            text=f"{self.locale.get('label_status')}: {self.locale.get('status_idle')}",
             font=ctk.CTkFont(size=12)
         )
         self.status_label.pack(side="left", padx=20)
@@ -122,7 +141,7 @@ class MainWindow(ctk.CTk):
         # 録音開始ボタン
         self.start_button = ctk.CTkButton(
             control_frame,
-            text="🎙️ 録音開始",
+            text=self.locale.get("btn_start"),
             font=ctk.CTkFont(size=14, weight="bold"),
             width=150,
             height=50,
@@ -133,7 +152,7 @@ class MainWindow(ctk.CTk):
         # 停止ボタン
         self.stop_button = ctk.CTkButton(
             control_frame,
-            text="⏹️ 停止",
+            text=self.locale.get("btn_stop"),
             font=ctk.CTkFont(size=14, weight="bold"),
             width=150,
             height=50,
@@ -145,7 +164,7 @@ class MainWindow(ctk.CTk):
         # コピーボタン
         self.copy_button = ctk.CTkButton(
             control_frame,
-            text="📋 コピー",
+            text=self.locale.get("btn_copy"),
             font=ctk.CTkFont(size=14),
             width=120,
             height=50,
@@ -156,7 +175,7 @@ class MainWindow(ctk.CTk):
         # 設定ボタン
         self.settings_button = ctk.CTkButton(
             control_frame,
-            text="⚙️ 設定",
+            text=self.locale.get("btn_settings"),
             font=ctk.CTkFont(size=14),
             width=120,
             height=50,
@@ -169,12 +188,16 @@ class MainWindow(ctk.CTk):
         # バッファマネージャの作成
         chunk_duration = self.settings.get("transcription.chunk_duration_sec", 30)
         sample_rate = self.settings.get("audio.sample_rate", 16000)
+        vad_enabled = self.settings.get("vad.enabled", False)
+        vad_aggressiveness = self.settings.get("vad.aggressiveness", 2)
 
         self.buffer_manager = AudioBufferManager(
             chunk_duration_sec=chunk_duration,
             sample_rate=sample_rate,
             channels=1,
-            on_chunk_ready=self._on_chunk_ready
+            on_chunk_ready=self._on_chunk_ready,
+            vad_enabled=vad_enabled,
+            vad_aggressiveness=vad_aggressiveness
         )
 
         # 録音デバイスの作成
@@ -193,6 +216,8 @@ class MainWindow(ctk.CTk):
         """文字起こしクライアントのセットアップ"""
         model = self.settings.get("transcription.model", "whisper-groq")
         language = self.settings.get("transcription.language", "ja")
+        sample_rate = self.settings.get("audio.sample_rate", 16000)
+        channels = self.settings.get("audio.channels", 1)
 
         if model == "whisper-groq":
             if not self.settings.groq_api_key:
@@ -204,7 +229,9 @@ class MainWindow(ctk.CTk):
                 model_name=self.settings.get("transcription.whisper.model_name",
                                             "whisper-large-v3-turbo"),
                 language=language,
-                temperature=self.settings.get("transcription.whisper.temperature", 0.0)
+                temperature=self.settings.get("transcription.whisper.temperature", 0.0),
+                sample_rate=sample_rate,
+                channels=channels
             )
 
         elif model in ["gpt-4o-transcribe", "gpt-4o-diarize"]:
@@ -219,7 +246,9 @@ class MainWindow(ctk.CTk):
                 api_key=self.settings.openai_api_key,
                 model_name=model_name,
                 language=language,
-                enable_diarization=enable_diarization
+                enable_diarization=enable_diarization,
+                sample_rate=sample_rate,
+                channels=channels
             )
 
     def _on_chunk_ready(self, audio_chunk: bytes, timestamp: float) -> None:
@@ -238,13 +267,14 @@ class MainWindow(ctk.CTk):
         text = self.transcriber.transcribe(audio_chunk, timestamp)
 
         if text:
-            # タイムスタンプ付きでテキストを追加
-            time_str = self._format_timestamp(timestamp)
-            formatted_text = f"[{time_str}] {text}\n"
+            # TranscriptBuilderにチャンクを追加
+            self.transcript_builder.add_chunk(text, timestamp)
 
-            self.transcript_text += formatted_text
+            # 後方互換性のため
+            self.transcript_text = self.transcript_builder.get_text()
 
             # UIを更新（メインスレッドで実行）
+            formatted_text = text if not self.transcript_text or self.transcript_text == text else " " + text
             self.after(0, self._update_text_display, formatted_text)
 
             # ファイルに自動保存
@@ -266,6 +296,11 @@ class MainWindow(ctk.CTk):
     def _start_recording(self) -> None:
         """録音開始"""
         try:
+            # TranscriptBuilderをクリア
+            self.transcript_builder.clear()
+            self.transcript_text = ""
+            self.text_box.delete("1.0", "end")
+
             # 出力ファイルの準備
             self._prepare_output_file()
 
@@ -275,7 +310,9 @@ class MainWindow(ctk.CTk):
             # UIの更新
             self.start_button.configure(state="disabled")
             self.stop_button.configure(state="normal")
-            self.status_label.configure(text="状態: ● 録音中")
+            self.status_label.configure(
+                text=f"{self.locale.get('label_status')}: {self.locale.get('status_recording')}"
+            )
 
             # タイマー開始
             self._update_timer()
@@ -284,7 +321,9 @@ class MainWindow(ctk.CTk):
 
         except Exception as e:
             logger.error(f"Failed to start recording: {e}")
-            self.status_label.configure(text=f"エラー: {e}")
+            self.status_label.configure(
+                text=f"{self.locale.get('label_status')}: {self.locale.get('error_recording_failed')}"
+            )
 
     def _stop_recording(self) -> None:
         """録音停止"""
@@ -295,7 +334,9 @@ class MainWindow(ctk.CTk):
             # UIの更新
             self.start_button.configure(state="normal")
             self.stop_button.configure(state="disabled")
-            self.status_label.configure(text="状態: 待機中")
+            self.status_label.configure(
+                text=f"{self.locale.get('label_status')}: {self.locale.get('status_idle')}"
+            )
 
             logger.info("Recording stopped")
 
@@ -307,7 +348,7 @@ class MainWindow(ctk.CTk):
         if self.recorder and self.recorder.is_recording:
             elapsed = self.recorder.get_elapsed_time()
             time_str = self._format_timestamp(elapsed)
-            self.time_label.configure(text=f"録音時間: {time_str}")
+            self.time_label.configure(text=f"{self.locale.get('label_duration')}: {time_str}")
 
             # 1秒後に再度更新
             self.after(1000, self._update_timer)
@@ -333,12 +374,33 @@ class MainWindow(ctk.CTk):
             return
 
         try:
-            with open(self.output_file_path, "w", encoding="utf-8") as f:
-                # ヘッダー
-                header = f"# 議事録 - {datetime.datetime.now().strftime('%Y年%m月%d日 %H:%M')}\n\n"
-                f.write(header + self.transcript_text)
+            # 設定から出力フォーマットを取得
+            format_type = self.settings.get("output.format", "txt")
 
-            logger.debug(f"Saved to {self.output_file_path}")
+            # メタデータを作成
+            model_name = self.settings.get("transcription.model", "")
+            elapsed = self.recorder.get_elapsed_time() if self.recorder else 0
+            duration = self._format_timestamp(elapsed)
+
+            metadata = self.transcript_builder.get_metadata(
+                title="議事録",
+                model=model_name,
+                duration=duration
+            )
+
+            # フォーマットに応じて内容を整形
+            text = self.transcript_builder.get_text()
+
+            if format_type == "md":
+                content = OutputFormatter.format_markdown(text, metadata)
+            elif format_type == "json":
+                chunks = self.transcript_builder.get_chunks()
+                content = OutputFormatter.format_json(text, metadata, chunks)
+            else:  # txt
+                content = OutputFormatter.format_text(text, metadata)
+
+            # ファイルに保存
+            OutputFormatter.save_file(self.output_file_path, content, format_type)
 
         except Exception as e:
             logger.error(f"Failed to save file: {e}")
@@ -346,9 +408,15 @@ class MainWindow(ctk.CTk):
     def _copy_to_clipboard(self) -> None:
         """クリップボードにコピー"""
         try:
-            pyperclip.copy(self.transcript_text)
-            self.status_label.configure(text="状態: クリップボードにコピーしました")
-            self.after(3000, lambda: self.status_label.configure(text="状態: 待機中"))
+            if self.transcript_text:
+                pyperclip.copy(self.transcript_text)
+                logger.info(self.locale.get("message_copied"))
+                # 一時的に通知を表示
+                original_text = self.copy_button.cget("text")
+                self.copy_button.configure(text="✓")
+                self.after(1000, lambda: self.copy_button.configure(text=original_text))
+            else:
+                logger.warning(self.locale.get("message_no_text"))
 
         except Exception as e:
             logger.error(f"Failed to copy to clipboard: {e}")
@@ -356,8 +424,54 @@ class MainWindow(ctk.CTk):
     def _open_settings(self) -> None:
         """設定ダイアログを開く"""
         # TODO: Phase 2で実装
-        self.status_label.configure(text="設定ダイアログは Phase 2 で実装予定")
-        self.after(3000, lambda: self.status_label.configure(text="状態: 待機中"))
+        logger.info("Settings dialog not implemented yet (Phase 2)")
+
+    def _toggle_language(self) -> None:
+        """言語を切り替える"""
+        new_language = self.locale.toggle_language()
+
+        # 設定ファイルに保存
+        self.settings.update("ui.language", new_language)
+        self.settings.save()
+        """言語を切り替える"""
+        new_language = self.locale.toggle_language()
+
+        # 設定ファイルに保存
+        self.settings.update("ui.language", new_language)
+        self.settings.save()
+
+        # UIを更新
+        self._refresh_ui()
+
+        logger.info(f"Language changed to: {new_language}")
+
+    def _refresh_ui(self) -> None:
+        """UIテキストを再読み込み"""
+        # ウィンドウタイトル
+        self.title(self.locale.get("app_title"))
+
+        # タイトルラベル
+        self.title_label.configure(text=f"📝 {self.locale.get('app_title')}")
+
+        # 言語ボタン
+        self.language_button.configure(text=self.locale.get("btn_language"))
+
+        # ステータスバー
+        if self.recorder and self.recorder.is_recording:
+            status_text = self.locale.get('status_recording')
+        else:
+            status_text = self.locale.get('status_idle')
+
+        elapsed = self.recorder.get_elapsed_time() if self.recorder else 0
+        time_str = self._format_timestamp(elapsed)
+        self.time_label.configure(text=f"{self.locale.get('label_duration')}: {time_str}")
+        self.status_label.configure(text=f"{self.locale.get('label_status')}: {status_text}")
+
+        # ボタン
+        self.start_button.configure(text=self.locale.get("btn_start"))
+        self.stop_button.configure(text=self.locale.get("btn_stop"))
+        self.copy_button.configure(text=self.locale.get("btn_copy"))
+        self.settings_button.configure(text=self.locale.get("btn_settings"))
 
     def cleanup(self) -> None:
         """クリーンアップ"""

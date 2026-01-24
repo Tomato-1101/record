@@ -4,6 +4,7 @@ gpt-4o-transcribe および gpt-4o-transcribe-diarize 対応
 """
 import io
 import time
+import wave
 from typing import Optional, List, Dict
 import httpx
 from openai import OpenAI, AsyncOpenAI
@@ -23,7 +24,9 @@ class GPT4oTranscriber:
         model_name: str = "gpt-4o-transcribe",
         language: str = "ja",
         enable_diarization: bool = False,
-        max_retries: int = 3
+        max_retries: int = 3,
+        sample_rate: int = 16000,
+        channels: int = 1
     ):
         """
         GPT-4o クライアントの初期化
@@ -34,12 +37,16 @@ class GPT4oTranscriber:
             language: 文字起こし言語
             enable_diarization: 話者分離を有効化
             max_retries: 最大リトライ回数
+            sample_rate: サンプルレート（Hz）
+            channels: チャンネル数
         """
         self.api_key = api_key
         self.model_name = model_name
         self.language = language
         self.enable_diarization = enable_diarization
         self.max_retries = max_retries
+        self.sample_rate = sample_rate
+        self.channels = channels
 
         # OpenAIクライアント
         self.client = OpenAI(api_key=api_key)
@@ -53,6 +60,26 @@ class GPT4oTranscriber:
             f"GPT4oTranscriber initialized: "
             f"model={model_name}, diarization={enable_diarization}"
         )
+
+    def _convert_to_wav(self, pcm_data: bytes) -> bytes:
+        """
+        生のPCMデータをWAVフォーマットに変換
+
+        Args:
+            pcm_data: 生のPCMデータ（bytes）
+
+        Returns:
+            WAVフォーマットの音声データ
+        """
+        wav_buffer = io.BytesIO()
+        with wave.open(wav_buffer, 'wb') as wav_file:
+            wav_file.setnchannels(self.channels)
+            wav_file.setsampwidth(2)  # 16-bit = 2 bytes
+            wav_file.setframerate(self.sample_rate)
+            wav_file.writeframes(pcm_data)
+
+        wav_buffer.seek(0)
+        return wav_buffer.read()
 
     def transcribe(
         self,
@@ -71,8 +98,11 @@ class GPT4oTranscriber:
         """
         for attempt in range(self.max_retries):
             try:
+                # PCMデータをWAVフォーマットに変換
+                wav_data = self._convert_to_wav(audio_chunk)
+
                 # 音声データをファイルライクオブジェクトに変換
-                audio_file = io.BytesIO(audio_chunk)
+                audio_file = io.BytesIO(wav_data)
                 audio_file.name = "audio.wav"
 
                 # API呼び出しパラメータ

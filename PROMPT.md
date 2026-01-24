@@ -86,12 +86,18 @@ response = client.audio.transcriptions.create(
 
 ### 4. VAD（Voice Activity Detection）
 
-音声区間検出を実装：
+**Silero VAD** を使用（PyTorch ベース・高精度）：
 
 - 無音区間の自動検出・スキップ
 - 発話開始/終了の検知
-- VAD ライブラリ: `webrtcvad` または `silero-vad` を推奨
 - VAD 感度をユーザーが調整可能（低/中/高）
+
+**Silero VAD の特徴:**
+
+- PyTorch ベースで高精度
+- CPU のみで動作（GPU 不要）
+- 16kHz サンプリングレート対応
+- リアルタイム処理可能
 
 **VAD 活用方法:**
 
@@ -137,11 +143,9 @@ pyaudio>=0.2.13          # または sounddevice
 numpy>=1.24.0
 scipy>=1.10.0
 
-# VAD
-webrtcvad>=2.0.10        # 軽量VAD
-# または
-torch>=2.0.0             # silero-vad使用時
-torchaudio>=2.0.0
+# VAD (Silero VAD)
+torch>=2.0.0             # Silero VAD用
+torchaudio>=2.0.0        # 音声処理用
 
 # API通信
 openai>=1.0.0
@@ -241,17 +245,40 @@ class AudioBufferManager:
 ### 3. VAD プロセッサ (`audio/vad.py`)
 
 ```python
-class VADProcessor:
+import torch
+
+class SileroVADProcessor:
     """
-    Voice Activity Detection
+    Silero VAD を使用した Voice Activity Detection
     - 発話区間の検出
     - 無音区間のフィルタリング
     - チャンク境界の最適化
     """
 
-    # VAD設定
-    FRAME_DURATION_MS = 30   # webrtcvad用
-    AGGRESSIVENESS = 2       # 0-3 (高いほど厳格)
+    def __init__(self, threshold: float = 0.5):
+        # Silero VADモデルをロード
+        self.model, self.utils = torch.hub.load(
+            repo_or_dir='snakers4/silero-vad',
+            model='silero_vad',
+            force_reload=False
+        )
+        self.threshold = threshold  # 0.0-1.0 (高いほど厳格)
+        self.sampling_rate = 16000
+
+    def is_speech(self, audio_chunk: torch.Tensor) -> bool:
+        """音声が含まれているか判定"""
+        confidence = self.model(audio_chunk, self.sampling_rate).item()
+        return confidence > self.threshold
+
+    def get_speech_timestamps(self, audio: torch.Tensor) -> list:
+        """発話区間のタイムスタンプを取得"""
+        get_speech_timestamps = self.utils[0]
+        return get_speech_timestamps(
+            audio,
+            self.model,
+            threshold=self.threshold,
+            sampling_rate=self.sampling_rate
+        )
 ```
 
 ### 4. 文字起こしクライアント (`transcription/whisper_client.py`)

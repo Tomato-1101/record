@@ -4,6 +4,7 @@ Whisper Large V3 Turbo を使用した文字起こし
 """
 import io
 import time
+import wave
 from typing import Optional
 import httpx
 from groq import Groq, AsyncGroq
@@ -24,7 +25,9 @@ class WhisperTranscriber:
         model_name: str = "whisper-large-v3-turbo",
         language: str = "ja",
         temperature: float = 0.0,
-        max_retries: int = 3
+        max_retries: int = 3,
+        sample_rate: int = 16000,
+        channels: int = 1
     ):
         """
         Whisperクライアントの初期化
@@ -35,12 +38,16 @@ class WhisperTranscriber:
             language: 文字起こし言語
             temperature: 温度パラメータ（0.0-1.0）
             max_retries: 最大リトライ回数
+            sample_rate: サンプルレート（Hz）
+            channels: チャンネル数
         """
         self.api_key = api_key
         self.model_name = model_name
         self.language = language
         self.temperature = temperature
         self.max_retries = max_retries
+        self.sample_rate = sample_rate
+        self.channels = channels
 
         # Groqクライアント
         self.client = Groq(api_key=api_key)
@@ -54,6 +61,26 @@ class WhisperTranscriber:
             f"WhisperTranscriber initialized: "
             f"model={model_name}, language={language}"
         )
+
+    def _convert_to_wav(self, pcm_data: bytes) -> bytes:
+        """
+        生のPCMデータをWAVフォーマットに変換
+
+        Args:
+            pcm_data: 生のPCMデータ（bytes）
+
+        Returns:
+            WAVフォーマットの音声データ
+        """
+        wav_buffer = io.BytesIO()
+        with wave.open(wav_buffer, 'wb') as wav_file:
+            wav_file.setnchannels(self.channels)
+            wav_file.setsampwidth(2)  # 16-bit = 2 bytes
+            wav_file.setframerate(self.sample_rate)
+            wav_file.writeframes(pcm_data)
+
+        wav_buffer.seek(0)
+        return wav_buffer.read()
 
     def transcribe(
         self,
@@ -72,8 +99,11 @@ class WhisperTranscriber:
         """
         for attempt in range(self.max_retries):
             try:
+                # PCMデータをWAVフォーマットに変換
+                wav_data = self._convert_to_wav(audio_chunk)
+
                 # 音声データをファイルライクオブジェクトに変換
-                audio_file = io.BytesIO(audio_chunk)
+                audio_file = io.BytesIO(wav_data)
                 audio_file.name = "audio.wav"  # ファイル名が必要
 
                 # Whisper API呼び出し
@@ -144,8 +174,11 @@ class WhisperTranscriber:
         """
         for attempt in range(self.max_retries):
             try:
+                # PCMデータをWAVフォーマットに変換
+                wav_data = self._convert_to_wav(audio_chunk)
+
                 # 音声データをファイルライクオブジェクトに変換
-                audio_file = io.BytesIO(audio_chunk)
+                audio_file = io.BytesIO(wav_data)
                 audio_file.name = "audio.wav"
 
                 # Whisper API呼び出し（非同期）

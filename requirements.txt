@@ -3,8 +3,9 @@ pyaudio>=0.2.13
 numpy>=1.24.0
 scipy>=1.10.0
 
-# VAD (Phase 2で使用)
-webrtcvad>=2.0.10
+# VAD (Silero VAD)
+torch>=2.0.0
+torchaudio>=2.0.0
 
 # API通信
 openai>=1.0.0
@@ -19,6 +20,9 @@ python-dotenv>=1.0.0
 pydub>=0.25.1
 pyperclip>=1.8.0
 PyYAML>=6.0.0
+
+# VAD (Voice Activity Detection)
+webrtcvad>=2.0.10
 
 # ログ・デバッグ
 loguru>=0.7.0
