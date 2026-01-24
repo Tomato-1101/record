@@ -47,6 +47,8 @@ class MainWindow(ctk.CTk):
             "#F97316",  # Orange-red
         ]
         self.speaker_color_map = {}  # 話者名 -> 色のマッピング
+        self.speaker_history = {}  # API話者ID → 一貫性のあるラベル
+        self.last_speaker = None  # 最後の話者
 
         # ローカライゼーションマネージャ
         ui_language = self.settings.get("ui.language", "ja")
@@ -122,6 +124,12 @@ class MainWindow(ctk.CTk):
             wrap="word"
         )
         self.text_box.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+
+        # 話者変更セパレータスタイル
+        try:
+            self.text_box._textbox.tag_config("speaker_change", foreground="gray", justify="center")
+        except:
+            pass
 
     def _create_status_bar(self) -> None:
         """ステータスバーの作成"""
@@ -326,6 +334,18 @@ class MainWindow(ctk.CTk):
         # DIARIZEモデルの出力パターンを検出: 話者A: テキスト
         speaker_pattern = r'(話者[A-Z]):'
 
+        # 話者変更を検出
+        current_speaker = None
+        match = re.search(speaker_pattern, text)
+        if match:
+            current_speaker = match.group(1)
+
+            if self.last_speaker and self.last_speaker != current_speaker:
+                # 話者が変わった - 視覚的セパレータを追加
+                self.text_box.insert("end", "\n---\n", "speaker_change")
+
+            self.last_speaker = current_speaker
+
         if re.search(speaker_pattern, text):
             # 話者名が含まれている場合、色付きで表示
             parts = re.split(speaker_pattern, text)
@@ -359,6 +379,31 @@ class MainWindow(ctk.CTk):
             self.text_box.insert("end", text)
 
         self.text_box.see("end")  # 自動スクロール
+
+    def _track_speaker(self, speaker_label: str) -> str:
+        """
+        話者ラベルを一貫性のあるものに変換
+
+        Args:
+            speaker_label: APIから返された話者ラベル（例: SPEAKER_0）
+
+        Returns:
+            一貫性のある話者ラベル（例: 話者A）
+        """
+        if speaker_label not in self.speaker_history:
+            # 新しい話者 - 次の利用可能なラベルを割り当て
+            existing_count = len(self.speaker_history)
+            labels = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+            if existing_count < len(labels):
+                consistent_label = f"話者{labels[existing_count]}"
+            else:
+                consistent_label = f"話者{existing_count + 1}"
+
+            self.speaker_history[speaker_label] = consistent_label
+            logger.info(f"New speaker detected: {speaker_label} -> {consistent_label}")
+
+        return self.speaker_history[speaker_label]
 
     def _start_recording(self) -> None:
         """録音開始"""

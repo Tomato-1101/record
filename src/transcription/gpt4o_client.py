@@ -54,6 +54,7 @@ class GPT4oTranscriber:
         self.prompt_template = prompt_template
         self.use_context = use_context
         self.previous_text = ""
+        self.previous_speakers = []  # 最後の3話者を追跡
 
         # OpenAIクライアント
         self.client = OpenAI(api_key=api_key)
@@ -226,6 +227,10 @@ class GPT4oTranscriber:
             # セグメント情報を取得
             segments = response_dict.get("segments", [])
 
+            # セグメントをマージ
+            if segments:
+                segments = self._merge_speaker_segments(segments)
+
             if not segments:
                 # セグメントがない場合、全体のテキストを返す
                 text = response_dict.get("text", "")
@@ -266,6 +271,22 @@ class GPT4oTranscriber:
                 # フォーマット: 話者A: テキスト
                 formatted_parts.append(f"{speaker_label}: {text}")
 
+            # 話者情報を保存（最後の3話者）
+            if segments:
+                speakers = []
+                for segment in segments:
+                    if isinstance(segment, dict):
+                        speaker_id = segment.get("speaker")
+                    else:
+                        speaker_id = getattr(segment, "speaker", None)
+                    if speaker_id:
+                        speakers.append(speaker_id)
+
+                # 最後の3話者を保存
+                self.previous_speakers.extend(speakers[-3:])
+                if len(self.previous_speakers) > 3:
+                    self.previous_speakers = self.previous_speakers[-3:]
+
             if formatted_parts:
                 return " ".join(formatted_parts)
             else:
@@ -285,6 +306,62 @@ class GPT4oTranscriber:
             except:
                 pass
             return ""
+
+    def _merge_speaker_segments(self, segments: list) -> list:
+        """
+        隣接する同一話者のセグメントをマージ
+
+        Args:
+            segments: セグメントリスト
+
+        Returns:
+            マージ済みセグメントリスト
+        """
+        if not segments:
+            return segments
+
+        merged = []
+        current_segment = None
+
+        # 最初のセグメントを辞書形式に変換
+        first_seg = segments[0]
+        if isinstance(first_seg, dict):
+            current_segment = first_seg.copy()
+        else:
+            current_segment = {
+                "speaker": getattr(first_seg, "speaker", "UNKNOWN"),
+                "start": getattr(first_seg, "start", 0),
+                "end": getattr(first_seg, "end", 0),
+                "text": getattr(first_seg, "text", "")
+            }
+
+        for next_seg in segments[1:]:
+            # 次のセグメントを辞書形式に変換
+            if isinstance(next_seg, dict):
+                next_segment = next_seg
+            else:
+                next_segment = {
+                    "speaker": getattr(next_seg, "speaker", "UNKNOWN"),
+                    "start": getattr(next_seg, "start", 0),
+                    "end": getattr(next_seg, "end", 0),
+                    "text": getattr(next_seg, "text", "")
+                }
+
+            # 同じ話者で2秒以内の間隔?
+            time_gap = next_segment.get("start", 0) - current_segment.get("end", 0)
+
+            if (next_segment.get("speaker") == current_segment.get("speaker") and
+                time_gap < 2.0):
+                # マージ
+                current_segment["end"] = next_segment.get("end", current_segment["end"])
+                current_segment["text"] += " " + next_segment.get("text", "")
+            else:
+                # 現在のセグメントを保存し、新しいセグメントを開始
+                merged.append(current_segment)
+                current_segment = next_segment.copy()
+
+        merged.append(current_segment)
+        return merged
 
     def _format_timestamp(self, seconds: float) -> str:
         """
