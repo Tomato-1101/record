@@ -144,10 +144,9 @@ class TranscriptBuilder:
         formatted_text = text if not self.text else " " + text
         self.text += formatted_text
 
-        # チャンク情報を保存
+        # チャンク情報を保存（テキスト本体は self.text に保存済み）
         self.chunks.append({
             "timestamp": timestamp,
-            "text": text,
             "length": len(text)
         })
 

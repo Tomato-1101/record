@@ -26,7 +26,8 @@ class AudioBufferManager:
         channels: int = 1,
         on_chunk_ready: Optional[Callable[[bytes, float], None]] = None,
         vad_enabled: bool = False,
-        vad_aggressiveness: int = 2
+        vad_aggressiveness: int = 2,
+        queue_maxsize: int = 20
     ):
         """
         バッファマネージャの初期化
@@ -38,6 +39,7 @@ class AudioBufferManager:
             on_chunk_ready: チャンク準備完了時のコールバック関数
             vad_enabled: VADを有効化するか
             vad_aggressiveness: VAD感度（0-3）
+            queue_maxsize: キューの最大サイズ
         """
         self.chunk_duration_sec = chunk_duration_sec
         self.sample_rate = sample_rate
@@ -53,7 +55,7 @@ class AudioBufferManager:
         self.buffer_lock = threading.Lock()
 
         # チャンク処理用キュー
-        self.chunk_queue = queue.Queue(maxsize=100)
+        self.chunk_queue = queue.Queue(maxsize=queue_maxsize)
 
         # VAD
         self.vad_enabled = vad_enabled
@@ -64,9 +66,12 @@ class AudioBufferManager:
                 aggressiveness=vad_aggressiveness
             )
             if self.vad_processor.is_available():
-                logger.info("VAD enabled")
+                logger.info(f"VAD enabled (aggressiveness: {vad_aggressiveness})")
             else:
-                logger.warning("VAD requested but webrtcvad not available")
+                logger.error(
+                    "VAD requested but webrtcvad is not available! "
+                    "Install with: pip install webrtcvad"
+                )
                 self.vad_enabled = False
 
         # 統計情報
@@ -98,8 +103,12 @@ class AudioBufferManager:
 
             # チャンクサイズに達したら分割
             while len(self.buffer) >= self.chunk_size_bytes:
-                chunk = bytes(self.buffer[:self.chunk_size_bytes])
-                self.buffer = self.buffer[self.chunk_size_bytes:]
+                # memoryviewでゼロコピー操作
+                mv = memoryview(self.buffer)
+                chunk = bytes(mv[:self.chunk_size_bytes])
+
+                # インプレース削除でメモリコピーを削減
+                del self.buffer[:self.chunk_size_bytes]
 
                 # チャンクのタイムスタンプ（録音開始からの経過時間）
                 timestamp = self._get_current_timestamp()
@@ -159,19 +168,26 @@ class AudioBufferManager:
                 # タイムアウト付きでチャンクを取得
                 chunk, timestamp = self.chunk_queue.get(timeout=1.0)
 
-                # VADによる発話検出
+                # VADによる発話検出と発話区間抽出
+                processed_chunk = chunk
                 should_process = True
+
                 if self.vad_enabled and self.vad_processor:
-                    is_speech = self.vad_processor.is_speech(chunk)
-                    if not is_speech:
-                        logger.debug(f"Skipping silent chunk at {timestamp:.2f}s")
+                    # 発話区間のみを抽出
+                    processed_chunk = self.vad_processor.extract_speech_segments(chunk)
+
+                    # 抽出結果が空、または非常に短い（1秒未満）場合はスキップ
+                    min_chunk_size = self.sample_rate * 2  # 1秒分（16000Hz * 2bytes * 1sec）
+                    if not processed_chunk or len(processed_chunk) < min_chunk_size:
+                        chunk_duration = len(processed_chunk) / (self.sample_rate * 2) if processed_chunk else 0
+                        logger.info(f"Skipping silent/short chunk at {timestamp:.2f}s (duration: {chunk_duration:.2f}s)")
                         self.total_chunks_skipped += 1
                         should_process = False
 
-                # コールバック関数を呼び出し
+                # コールバック関数を呼び出し（発話区間のみを送信）
                 if should_process and self.on_chunk_ready:
                     try:
-                        self.on_chunk_ready(chunk, timestamp)
+                        self.on_chunk_ready(processed_chunk, timestamp)
                         self.total_chunks_processed += 1
                     except Exception as e:
                         logger.error(f"Error in chunk callback: {e}")

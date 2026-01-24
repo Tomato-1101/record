@@ -67,6 +67,8 @@ class SettingsDialog(ctk.CTkToplevel):
 
     def _create_audio_section(self, parent) -> None:
         """音声設定セクション"""
+        # 音声設定セクションは削除（システムデフォルトデバイスを使用）
+        # セクションラベルのみ表示（将来の拡張用）
         section_label = ctk.CTkLabel(
             parent,
             text=f"▼ {self.locale.get('settings_audio')}",
@@ -74,24 +76,14 @@ class SettingsDialog(ctk.CTkToplevel):
         )
         section_label.pack(anchor="w", pady=(10, 5))
 
-        # 入力デバイス選択（Phase 2では簡易実装）
-        device_frame = ctk.CTkFrame(parent)
-        device_frame.pack(fill="x", pady=5)
-
-        device_label = ctk.CTkLabel(
-            device_frame,
-            text=self.locale.get("settings_device"),
-            width=150
+        # 説明テキスト
+        info_label = ctk.CTkLabel(
+            parent,
+            text=self.locale.get("settings_audio_info"),
+            font=ctk.CTkFont(size=12),
+            text_color="gray"
         )
-        device_label.pack(side="left", padx=10)
-
-        self.device_combo = ctk.CTkComboBox(
-            device_frame,
-            values=["デフォルト"],
-            state="readonly",
-            width=250
-        )
-        self.device_combo.pack(side="left", padx=10)
+        info_label.pack(anchor="w", padx=10, pady=5)
 
     def _create_transcription_section(self, parent) -> None:
         """文字起こし設定セクション"""
@@ -113,13 +105,20 @@ class SettingsDialog(ctk.CTkToplevel):
         )
         chunk_label.pack(side="left", padx=10)
 
-        self.chunk_combo = ctk.CTkComboBox(
+        # 数値入力フィールド
+        self.chunk_entry = ctk.CTkEntry(
             chunk_frame,
-            values=["30秒", "60秒"],
-            state="readonly",
-            width=250
+            width=100,
+            placeholder_text="30"
         )
-        self.chunk_combo.pack(side="left", padx=10)
+        self.chunk_entry.pack(side="left", padx=10)
+
+        chunk_unit_label = ctk.CTkLabel(
+            chunk_frame,
+            text="秒 (5-120)",
+            width=80
+        )
+        chunk_unit_label.pack(side="left", padx=5)
 
         # APIモデル選択
         model_frame = ctk.CTkFrame(parent)
@@ -172,15 +171,17 @@ class SettingsDialog(ctk.CTkToplevel):
         )
         section_label.pack(anchor="w", pady=(20, 5))
 
-        # VAD有効化チェックボックス
+        # VAD有効化の説明（常にON）
         vad_frame = ctk.CTkFrame(parent)
         vad_frame.pack(fill="x", pady=5)
 
-        self.vad_enable_checkbox = ctk.CTkCheckBox(
+        vad_info_label = ctk.CTkLabel(
             vad_frame,
-            text=self.locale.get("settings_vad_enable")
+            text=self.locale.get("settings_vad_info"),
+            font=ctk.CTkFont(size=12),
+            text_color="gray"
         )
-        self.vad_enable_checkbox.pack(side="left", padx=10)
+        vad_info_label.pack(side="left", padx=10)
 
         # VAD感度スライダー
         sensitivity_frame = ctk.CTkFrame(parent)
@@ -267,7 +268,7 @@ class SettingsDialog(ctk.CTkToplevel):
         """現在の設定値を読み込み"""
         # チャンク間隔
         chunk_duration = self.settings.get("transcription.chunk_duration_sec", 30)
-        self.chunk_combo.set("30秒" if chunk_duration == 30 else "60秒")
+        self.chunk_entry.insert(0, str(chunk_duration))
 
         # APIモデル
         model = self.settings.get("transcription.model", "whisper-groq")
@@ -287,10 +288,7 @@ class SettingsDialog(ctk.CTkToplevel):
         }
         self.lang_combo.set(lang_map.get(language, "日本語 (ja)"))
 
-        # VAD
-        vad_enabled = self.settings.get("vad.enabled", False)
-        self.vad_enable_checkbox.select() if vad_enabled else self.vad_enable_checkbox.deselect()
-
+        # VAD感度（VADは常に有効）
         vad_aggressiveness = self.settings.get("vad.aggressiveness", 2)
         self.vad_sensitivity_slider.set(vad_aggressiveness)
         self._update_vad_label(vad_aggressiveness)
@@ -312,9 +310,22 @@ class SettingsDialog(ctk.CTkToplevel):
     def _on_save(self) -> None:
         """保存ボタンクリック時"""
         try:
-            # チャンク間隔
-            chunk_text = self.chunk_combo.get()
-            chunk_duration = 30 if "30" in chunk_text else 60
+            # チャンク間隔（入力値を検証）
+            chunk_text = self.chunk_entry.get().strip()
+            try:
+                chunk_duration = int(chunk_text)
+                # 5秒～120秒の範囲でバリデーション
+                if chunk_duration < 5:
+                    chunk_duration = 5
+                    logger.warning(f"Chunk duration too short, set to 5s")
+                elif chunk_duration > 120:
+                    chunk_duration = 120
+                    logger.warning(f"Chunk duration too long, set to 120s")
+            except ValueError:
+                # 無効な値の場合はデフォルト30秒
+                chunk_duration = 30
+                logger.warning(f"Invalid chunk duration '{chunk_text}', using default 30s")
+
             self.settings.update("transcription.chunk_duration_sec", chunk_duration)
 
             # APIモデル
@@ -337,10 +348,7 @@ class SettingsDialog(ctk.CTkToplevel):
                 language = "en"
             self.settings.update("transcription.language", language)
 
-            # VAD
-            vad_enabled = self.vad_enable_checkbox.get() == 1
-            self.settings.update("vad.enabled", vad_enabled)
-
+            # VAD（常に有効なので感度のみ保存）
             vad_aggressiveness = int(self.vad_sensitivity_slider.get())
             self.settings.update("vad.aggressiveness", vad_aggressiveness)
 

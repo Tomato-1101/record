@@ -190,9 +190,11 @@ When adding features:
 
 ## Phase 2 Features (Completed)
 
-- **VAD (Voice Activity Detection)**: webrtcvad-based silence detection to skip API calls on silent chunks, reducing costs
-  - Configurable aggressiveness (0-3)
-  - Automatic speech detection with 30% threshold
+- **VAD (Voice Activity Detection)**: Silero VAD-based silence detection to skip API calls on silent chunks, reducing costs
+  - Configurable aggressiveness (0-3) mapped to threshold values (0.1-0.7)
+  - Uses PyTorch-based Silero VAD model for high accuracy
+  - Extracts only speech segments from audio chunks
+  - Minimum speech duration: 250ms
   - See `src/audio/vad.py` and integration in `src/audio/buffer.py`
 
 - **Multilingual UI**: Japanese/Chinese language toggle

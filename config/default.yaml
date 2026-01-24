@@ -1,55 +1,37 @@
-# デフォルト設定ファイル
-
-# 音声設定
 audio:
-  sample_rate: 16000  # Whisper推奨サンプルレート
-  channels: 1  # モノラル
-  chunk_size: 1024  # PyAudioバッファサイズ
-  format: paInt16  # 16bit
-
-# 文字起こし設定
-transcription:
-  chunk_duration_sec: 30  # チャンク間隔（秒）30または60
-  model: "whisper-groq"  # whisper-groq | gpt-4o-transcribe | gpt-4o-diarize
-  language: "ja"  # 文字起こし言語
-
-  # Whisper (Groq) 設定
-  whisper:
-    model_name: "whisper-large-v3-turbo"
-    temperature: 0.0
-
-  # GPT-4o 設定
-  gpt4o:
-    model_name: "gpt-4o-transcribe"
-    response_format: "text"  # text | json | verbose_json
-
-  # GPT-4o Diarize 設定
-  gpt4o_diarize:
-    model_name: "gpt-4o-transcribe-diarize"
-    response_format: "diarized_json"
-    chunking_strategy: "auto"
-
-# VAD設定 (Phase 2)
-vad:
-  enabled: false  # Phase 2で実装
-  aggressiveness: 2  # 0-3 (高いほど厳格)
-  frame_duration_ms: 30
-
-# 出力設定
-output:
-  directory: "output"
-  format: "txt"  # txt | md | json
-  auto_save: true
-  file_prefix: "transcript_"
-
-# UI設定
-ui:
-  language: "ja"  # ja | zh
-  theme: "dark"  # dark | light
-
-# ログ設定
+  channels: 1
+  chunk_size: 1024
+  format: paInt16
+  sample_rate: 16000
+  queue_maxsize: 20
 logging:
-  level: "INFO"  # DEBUG | INFO | WARNING | ERROR
-  file: "logs/app.log"
-  max_size_mb: 10
   backup_count: 3
+  file: logs/app.log
+  level: INFO
+  max_size_mb: 10
+output:
+  auto_save: true
+  directory: output
+  file_prefix: transcript_
+  format: txt
+transcription:
+  chunk_duration_sec: 5
+  gpt4o:
+    model_name: gpt-4o-transcribe
+    response_format: text
+  gpt4o_diarize:
+    chunking_strategy: auto
+    model_name: gpt-4o-transcribe-diarize
+    response_format: diarized_json
+  language: ja
+  model: whisper-groq
+  whisper:
+    model_name: whisper-large-v3-turbo
+    temperature: 0.0
+ui:
+  language: ja
+  theme: dark
+vad:
+  aggressiveness: 1
+  enabled: true
+  frame_duration_ms: 30

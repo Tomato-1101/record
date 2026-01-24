@@ -73,14 +73,17 @@ class WhisperTranscriber:
             WAVフォーマットの音声データ
         """
         wav_buffer = io.BytesIO()
-        with wave.open(wav_buffer, 'wb') as wav_file:
-            wav_file.setnchannels(self.channels)
-            wav_file.setsampwidth(2)  # 16-bit = 2 bytes
-            wav_file.setframerate(self.sample_rate)
-            wav_file.writeframes(pcm_data)
+        try:
+            with wave.open(wav_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(self.channels)
+                wav_file.setsampwidth(2)  # 16-bit = 2 bytes
+                wav_file.setframerate(self.sample_rate)
+                wav_file.writeframes(pcm_data)
 
-        wav_buffer.seek(0)
-        return wav_buffer.read()
+            # getvalue()はread()よりもメモリ効率的
+            return wav_buffer.getvalue()
+        finally:
+            wav_buffer.close()
 
     def transcribe(
         self,

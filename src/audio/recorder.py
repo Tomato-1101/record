@@ -75,6 +75,9 @@ class AudioRecorder:
             f"format={format_str}"
         )
 
+        # 利用可能なデバイスをログに出力
+        self._log_available_devices()
+
     def list_devices(self) -> list:
         """
         利用可能な音声デバイス一覧を取得
@@ -94,6 +97,30 @@ class AudioRecorder:
                 })
         return devices
 
+    def _log_available_devices(self) -> None:
+        """利用可能なデバイスをログに出力"""
+        try:
+            logger.info("=== Available Input Devices ===")
+
+            # デフォルトデバイス情報
+            try:
+                default_info = self.pyaudio.get_default_input_device_info()
+                logger.info(f"Default Input Device: {default_info['name']} (index: {default_info['index']})")
+            except Exception as e:
+                logger.warning(f"No default input device found: {e}")
+
+            # すべての入力デバイス
+            devices = self.list_devices()
+            if devices:
+                for dev in devices:
+                    logger.info(f"  [{dev['index']}] {dev['name']} - {dev['channels']}ch, {dev['sample_rate']}Hz")
+            else:
+                logger.warning("No input devices found!")
+
+            logger.info("=" * 35)
+        except Exception as e:
+            logger.error(f"Failed to list devices: {e}")
+
     def start_recording(self) -> None:
         """録音を開始"""
         if self.is_recording:
@@ -101,6 +128,19 @@ class AudioRecorder:
             return
 
         try:
+            # デバイスインデックスの決定
+            device_index = self.device_index
+            if device_index is None:
+                # デフォルトデバイスを明示的に取得
+                try:
+                    default_device = self.pyaudio.get_default_input_device_info()
+                    device_index = default_device['index']
+                    logger.info(f"Using default input device: {default_device['name']} (index: {device_index})")
+                except Exception as e:
+                    logger.error(f"Failed to get default input device: {e}")
+                    # device_indexをNoneのままにして、PyAudioに任せる
+                    device_index = None
+
             # PyAudioストリームを開く
             self.stream = self.pyaudio.open(
                 format=self.format,
@@ -108,7 +148,7 @@ class AudioRecorder:
                 rate=self.sample_rate,
                 input=True,
                 frames_per_buffer=self.chunk_size,
-                input_device_index=self.device_index,
+                input_device_index=device_index,
                 stream_callback=None  # コールバックは使わず、スレッドで処理
             )
 
@@ -211,15 +251,26 @@ class AudioRecorder:
             "buffer_stats": self.buffer_manager.get_stats() if self.buffer_manager else {}
         }
 
+    def close(self) -> None:
+        """録音を停止してストリームを閉じる（PyAudioは終了しない）"""
+        if self.is_recording:
+            self.stop_recording()
+        logger.info("AudioRecorder closed")
+
     def cleanup(self) -> None:
-        """リソースのクリーンアップ"""
+        """リソースのクリーンアップ（PyAudioを終了）"""
         if self.is_recording:
             self.stop_recording()
 
         if self.pyaudio:
             self.pyaudio.terminate()
+            self.pyaudio = None
             logger.info("AudioRecorder cleaned up")
 
     def __del__(self):
         """デストラクタ"""
-        self.cleanup()
+        try:
+            if self.pyaudio:
+                self.cleanup()
+        except:
+            pass

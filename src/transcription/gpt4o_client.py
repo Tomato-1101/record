@@ -72,14 +72,17 @@ class GPT4oTranscriber:
             WAVフォーマットの音声データ
         """
         wav_buffer = io.BytesIO()
-        with wave.open(wav_buffer, 'wb') as wav_file:
-            wav_file.setnchannels(self.channels)
-            wav_file.setsampwidth(2)  # 16-bit = 2 bytes
-            wav_file.setframerate(self.sample_rate)
-            wav_file.writeframes(pcm_data)
+        try:
+            with wave.open(wav_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(self.channels)
+                wav_file.setsampwidth(2)  # 16-bit = 2 bytes
+                wav_file.setframerate(self.sample_rate)
+                wav_file.writeframes(pcm_data)
 
-        wav_buffer.seek(0)
-        return wav_buffer.read()
+            # getvalue()はread()よりもメモリ効率的
+            return wav_buffer.getvalue()
+        finally:
+            wav_buffer.close()
 
     def transcribe(
         self,
@@ -111,10 +114,9 @@ class GPT4oTranscriber:
                     "file": audio_file,
                 }
 
-                # 話者分離が有効な場合
+                # 話者分離が有効な場合はdiarized_jsonを使用
                 if self.enable_diarization:
                     params["response_format"] = "diarized_json"
-                    params["chunking_strategy"] = "auto"
                 else:
                     params["response_format"] = "text"
 
@@ -125,7 +127,8 @@ class GPT4oTranscriber:
 
                 # レスポンスの処理
                 if self.enable_diarization:
-                    # 話者分離付きレスポンス
+                    # diarized_jsonレスポンスを処理
+                    logger.debug(f"Diarize response type: {type(response)}")
                     text = self._format_diarized_response(response, timestamp)
                 else:
                     # 通常のテキストレスポンス
@@ -177,27 +180,56 @@ class GPT4oTranscriber:
         話者分離レスポンスをフォーマット
 
         Args:
-            response: APIレスポンス
+            response: APIレスポンス（diarized_json形式）
             base_timestamp: 基準タイムスタンプ（秒）
 
         Returns:
-            フォーマット済みテキスト
+            フォーマット済みテキスト（話者A: テキスト形式）
         """
         try:
-            segments = response.get("segments", []) if isinstance(response, dict) else []
+            # レスポンスがオブジェクトの場合、辞書に変換
+            if hasattr(response, 'model_dump'):
+                response_dict = response.model_dump()
+            elif hasattr(response, 'to_dict'):
+                response_dict = response.to_dict()
+            elif isinstance(response, dict):
+                response_dict = response
+            else:
+                # レスポンスがオブジェクトの場合、属性でアクセス
+                response_dict = {}
+                if hasattr(response, 'segments'):
+                    response_dict['segments'] = response.segments
+                if hasattr(response, 'text'):
+                    response_dict['text'] = response.text
+
+            logger.debug(f"Response keys: {list(response_dict.keys())}")
+
+            # セグメント情報を取得
+            segments = response_dict.get("segments", [])
 
             if not segments:
+                # セグメントがない場合、全体のテキストを返す
+                text = response_dict.get("text", "")
+                if text:
+                    return text.strip()
+                # 属性でアクセスを試みる
+                if hasattr(response, 'text'):
+                    return response.text.strip()
                 return ""
 
-            # 話者ラベルのマッピング（SPEAKER_0 -> 話者A, SPEAKER_1 -> 話者B, ...）
+            # 話者ラベルのマッピング
             speaker_map = {}
             speaker_labels = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-            formatted_lines = []
+            formatted_parts = []
             for segment in segments:
-                speaker_id = segment.get("speaker", "UNKNOWN")
-                start_time = segment.get("start", 0.0)
-                text = segment.get("text", "").strip()
+                # セグメントが辞書でない場合、オブジェクトとして扱う
+                if isinstance(segment, dict):
+                    speaker_id = segment.get("speaker", "UNKNOWN")
+                    text = segment.get("text", "").strip()
+                else:
+                    speaker_id = getattr(segment, "speaker", "UNKNOWN")
+                    text = getattr(segment, "text", "").strip()
 
                 if not text:
                     continue
@@ -205,21 +237,34 @@ class GPT4oTranscriber:
                 # 話者ラベルの取得または生成
                 if speaker_id not in speaker_map:
                     speaker_index = len(speaker_map)
-                    speaker_map[speaker_id] = f"話者{speaker_labels[speaker_index]}"
+                    if speaker_index < len(speaker_labels):
+                        speaker_map[speaker_id] = f"話者{speaker_labels[speaker_index]}"
+                    else:
+                        speaker_map[speaker_id] = f"話者{speaker_index + 1}"
 
                 speaker_label = speaker_map[speaker_id]
 
-                # タイムスタンプの計算（基準タイムスタンプ + セグメント開始時刻）
-                absolute_time = base_timestamp + start_time
-                time_str = self._format_timestamp(absolute_time)
+                # フォーマット: 話者A: テキスト
+                formatted_parts.append(f"{speaker_label}: {text}")
 
-                # フォーマット: [00:00:00] [話者A] テキスト
-                formatted_lines.append(f"[{time_str}] [{speaker_label}] {text}")
-
-            return "\n".join(formatted_lines)
+            if formatted_parts:
+                return " ".join(formatted_parts)
+            else:
+                # セグメントはあるがテキストが空の場合
+                return ""
 
         except Exception as e:
             logger.error(f"Error formatting diarized response: {e}")
+            logger.debug(f"Response type: {type(response)}")
+            logger.debug(f"Response: {response}")
+            # エラー時は通常のテキストとして処理を試みる
+            try:
+                if hasattr(response, 'text'):
+                    return response.text.strip()
+                elif isinstance(response, dict) and 'text' in response:
+                    return response['text'].strip()
+            except:
+                pass
             return ""
 
     def _format_timestamp(self, seconds: float) -> str:

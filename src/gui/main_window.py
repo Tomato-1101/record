@@ -35,6 +35,19 @@ class MainWindow(ctk.CTk):
         self.transcript_text = ""  # 後方互換性のため保持
         self.output_file_path: Optional[str] = None
 
+        # 話者カラーマッピング（DIARIZEモデル用）
+        self.speaker_colors = [
+            "#3B82F6",  # Blue
+            "#10B981",  # Green
+            "#F59E0B",  # Orange
+            "#EF4444",  # Red
+            "#8B5CF6",  # Purple
+            "#EC4899",  # Pink
+            "#14B8A6",  # Teal
+            "#F97316",  # Orange-red
+        ]
+        self.speaker_color_map = {}  # 話者名 -> 色のマッピング
+
         # ローカライゼーションマネージャ
         ui_language = self.settings.get("ui.language", "ja")
         self.locale = get_locale_manager(ui_language)
@@ -188,16 +201,18 @@ class MainWindow(ctk.CTk):
         # バッファマネージャの作成
         chunk_duration = self.settings.get("transcription.chunk_duration_sec", 30)
         sample_rate = self.settings.get("audio.sample_rate", 16000)
-        vad_enabled = self.settings.get("vad.enabled", False)
         vad_aggressiveness = self.settings.get("vad.aggressiveness", 2)
+        queue_maxsize = self.settings.get("audio.queue_maxsize", 20)
 
+        # VADは常に有効
         self.buffer_manager = AudioBufferManager(
             chunk_duration_sec=chunk_duration,
             sample_rate=sample_rate,
             channels=1,
             on_chunk_ready=self._on_chunk_ready,
-            vad_enabled=vad_enabled,
-            vad_aggressiveness=vad_aggressiveness
+            vad_enabled=True,  # 常にON
+            vad_aggressiveness=vad_aggressiveness,
+            queue_maxsize=queue_maxsize
         )
 
         # 録音デバイスの作成
@@ -267,6 +282,11 @@ class MainWindow(ctk.CTk):
         text = self.transcriber.transcribe(audio_chunk, timestamp)
 
         if text:
+            # 非常に短いテキスト（3文字未満）は無視（ノイズの可能性）
+            if len(text.strip()) < 3:
+                logger.debug(f"Ignoring short transcription: '{text}'")
+                return
+
             # TranscriptBuilderにチャンクを追加
             self.transcript_builder.add_chunk(text, timestamp)
 
@@ -274,7 +294,12 @@ class MainWindow(ctk.CTk):
             self.transcript_text = self.transcript_builder.get_text()
 
             # UIを更新（メインスレッドで実行）
-            formatted_text = text if not self.transcript_text or self.transcript_text == text else " " + text
+            # 既存のテキストがある場合はスペースを追加
+            if self.transcript_text and self.transcript_text != text:
+                formatted_text = " " + text
+            else:
+                formatted_text = text
+
             self.after(0, self._update_text_display, formatted_text)
 
             # ファイルに自動保存
@@ -289,8 +314,44 @@ class MainWindow(ctk.CTk):
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
     def _update_text_display(self, text: str) -> None:
-        """テキスト表示を更新"""
-        self.text_box.insert("end", text)
+        """テキスト表示を更新（話者名は色付き）"""
+        import re
+
+        # DIARIZEモデルの出力パターンを検出: 話者A: テキスト
+        speaker_pattern = r'(話者[A-Z]):'
+
+        if re.search(speaker_pattern, text):
+            # 話者名が含まれている場合、色付きで表示
+            parts = re.split(speaker_pattern, text)
+
+            for i, part in enumerate(parts):
+                if re.match(r'話者[A-Z]', part):
+                    # 話者名の場合、色を割り当てて表示
+                    if part not in self.speaker_color_map:
+                        color_index = len(self.speaker_color_map) % len(self.speaker_colors)
+                        self.speaker_color_map[part] = self.speaker_colors[color_index]
+
+                    color = self.speaker_color_map[part]
+
+                    # タグを作成（まだ作成されていない場合）
+                    tag_name = f"speaker_{part}"
+                    try:
+                        self.text_box.tag_config(tag_name, foreground=color, font=("", 14, "bold"))
+                    except:
+                        pass
+
+                    # 話者名を色付きで挿入
+                    start_index = self.text_box.index("end-1c")
+                    self.text_box.insert("end", part)
+                    end_index = self.text_box.index("end-1c")
+                    self.text_box.tag_add(tag_name, start_index, end_index)
+                else:
+                    # 通常のテキスト
+                    self.text_box.insert("end", part)
+        else:
+            # 通常のテキスト（話者なし）
+            self.text_box.insert("end", text)
+
         self.text_box.see("end")  # 自動スクロール
 
     def _start_recording(self) -> None:
@@ -300,6 +361,9 @@ class MainWindow(ctk.CTk):
             self.transcript_builder.clear()
             self.transcript_text = ""
             self.text_box.delete("1.0", "end")
+
+            # 話者カラーマッピングをクリア
+            self.speaker_color_map.clear()
 
             # 出力ファイルの準備
             self._prepare_output_file()
@@ -423,16 +487,30 @@ class MainWindow(ctk.CTk):
 
     def _open_settings(self) -> None:
         """設定ダイアログを開く"""
-        # TODO: Phase 2で実装
-        logger.info("Settings dialog not implemented yet (Phase 2)")
+        # 録音中は設定を変更できない
+        if self.recorder and self.recorder.is_recording:
+            logger.warning("Cannot change settings while recording")
+            return
+
+        # 設定ダイアログを開く
+        dialog = SettingsDialog(self, self.settings, on_save=self._on_settings_saved)
+        self.wait_window(dialog)
+
+    def _on_settings_saved(self) -> None:
+        """設定保存後のコールバック"""
+        # 設定が変更されたので、録音システムを再構築
+        logger.info("Settings changed, reinitializing recorder system")
+
+        # 既存のレコーダーをクローズ（PyAudioは終了しない）
+        if self.recorder:
+            self.recorder.close()
+
+        # 録音システムを再セットアップ
+        self._setup_recorder()
+
+        logger.info("Recorder system reinitialized")
 
     def _toggle_language(self) -> None:
-        """言語を切り替える"""
-        new_language = self.locale.toggle_language()
-
-        # 設定ファイルに保存
-        self.settings.update("ui.language", new_language)
-        self.settings.save()
         """言語を切り替える"""
         new_language = self.locale.toggle_language()
 
@@ -476,7 +554,7 @@ class MainWindow(ctk.CTk):
     def cleanup(self) -> None:
         """クリーンアップ"""
         if self.recorder:
-            self.recorder.cleanup()
+            self.recorder.cleanup()  # アプリ終了時はPyAudioも終了
         logger.info("MainWindow cleaned up")
 
     def on_closing(self) -> None:

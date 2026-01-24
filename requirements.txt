@@ -8,7 +8,7 @@ torch>=2.0.0
 torchaudio>=2.0.0
 
 # API通信
-openai>=1.0.0
+openai>=1.54.0
 groq>=0.4.0
 httpx>=0.24.0
 
@@ -20,9 +20,6 @@ python-dotenv>=1.0.0
 pydub>=0.25.1
 pyperclip>=1.8.0
 PyYAML>=6.0.0
-
-# VAD (Voice Activity Detection)
-webrtcvad>=2.0.10
 
 # ログ・デバッグ
 loguru>=0.7.0
