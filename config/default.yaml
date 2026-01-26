@@ -19,9 +19,7 @@ transcription:
   chunk_overlap_sec: 1
   gpt4o:
     model_name: gpt-4o-transcribe
-    prompt_template: これは日本語の会議録音です。専門用語を正確に認識してください。
     response_format: text
-    use_context: true
   gpt4o_diarize:
     chunking_strategy: auto
     model_name: gpt-4o-transcribe-diarize
@@ -30,9 +28,7 @@ transcription:
   model: whisper-groq
   whisper:
     model_name: whisper-large-v3-turbo
-    prompt_template: これは日本語の会議録音です。専門用語や固有名詞を正確に認識してください。
     temperature: 0.0
-    use_context: true
 ui:
   language: zh
   theme: dark
