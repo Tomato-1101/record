@@ -2,8 +2,8 @@ audio:
   channels: 1
   chunk_size: 1024
   format: paInt16
-  sample_rate: 16000
   queue_maxsize: 20
+  sample_rate: 16000
 logging:
   backup_count: 3
   file: logs/app.log
@@ -16,22 +16,22 @@ output:
   format: txt
 transcription:
   chunk_duration_sec: 5
-  chunk_overlap_sec: 5
+  chunk_overlap_sec: 1
   gpt4o:
     model_name: gpt-4o-transcribe
+    prompt_template: これは日本語の会議録音です。専門用語を正確に認識してください。
     response_format: text
-    prompt_template: "これは日本語の会議録音です。専門用語を正確に認識してください。"
     use_context: true
   gpt4o_diarize:
     chunking_strategy: auto
     model_name: gpt-4o-transcribe-diarize
     response_format: diarized_json
   language: ja
-  model: whisper-groq
+  model: gpt-4o-transcribe
   whisper:
     model_name: whisper-large-v3-turbo
+    prompt_template: これは日本語の会議録音です。専門用語や固有名詞を正確に認識してください。
     temperature: 0.0
-    prompt_template: "これは日本語の会議録音です。専門用語や固有名詞を正確に認識してください。"
     use_context: true
 ui:
   language: ja

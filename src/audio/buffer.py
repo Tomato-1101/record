@@ -126,12 +126,12 @@ class AudioBufferManager:
 
                 try:
                     self.chunk_queue.put_nowait((chunk_with_overlap, timestamp))
-                    logger.debug(f"Chunk added to queue: {len(chunk)} bytes at {timestamp:.2f}s")
+                    logger.debug(f"Chunk added to queue: {len(chunk_with_overlap)} bytes at {timestamp:.2f}s")
                 except queue.Full:
                     logger.warning("Chunk queue is full, dropping oldest chunk")
                     try:
                         self.chunk_queue.get_nowait()  # 古いチャンクを削除
-                        self.chunk_queue.put_nowait((chunk, timestamp))
+                        self.chunk_queue.put_nowait((chunk_with_overlap, timestamp))
                     except queue.Empty:
                         pass
 
