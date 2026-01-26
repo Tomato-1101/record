@@ -14,6 +14,7 @@
   "status_idle": "待機中",
   "label_duration": "録音時間",
   "label_status": "状態",
+  "label_language": "録音言語",
   "message_copied": "テキストをクリップボードにコピーしました",
   "message_no_text": "コピーするテキストがありません",
   "error_recording_failed": "録音の開始に失敗しました",

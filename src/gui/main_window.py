@@ -159,6 +159,16 @@ class MainWindow(ctk.CTk):
         )
         self.status_label.pack(side="left", padx=20)
 
+        # 録音言語
+        language = self.settings.get("transcription.language", "ja")
+        lang_display = {"ja": "日本語", "zh": "中文", "en": "English"}.get(language, "日本語")
+        self.language_label = ctk.CTkLabel(
+            status_frame,
+            text=f"{self.locale.get('label_language', '言語')}: {lang_display}",
+            font=ctk.CTkFont(size=12)
+        )
+        self.language_label.pack(side="left", padx=20)
+
     def _create_control_panel(self) -> None:
         """コントロールパネルの作成"""
         control_frame = ctk.CTkFrame(self, height=80)
@@ -274,6 +284,14 @@ class MainWindow(ctk.CTk):
         sample_rate = self.settings.get("audio.sample_rate", 16000)
         channels = self.settings.get("audio.channels", 1)
 
+        # 言語に応じたプロンプトを生成
+        prompt_templates = {
+            "ja": "これは日本語の会議録音です。専門用語や固有名詞を正確に認識してください。",
+            "zh": "这是中文会议录音。请准确识别专业术语和专有名词。",
+            "en": "This is an English meeting recording. Please accurately recognize technical terms and proper nouns."
+        }
+        prompt_template = prompt_templates.get(language, prompt_templates["ja"])
+
         if model == "whisper-groq":
             if not self.settings.groq_api_key:
                 logger.error("Groq API key not found")
@@ -287,7 +305,7 @@ class MainWindow(ctk.CTk):
                 temperature=self.settings.get("transcription.whisper.temperature", 0.0),
                 sample_rate=sample_rate,
                 channels=channels,
-                prompt_template=self.settings.get("transcription.whisper.prompt_template", ""),
+                prompt_template=prompt_template,
                 use_context=self.settings.get("transcription.whisper.use_context", False)
             )
 
@@ -299,6 +317,14 @@ class MainWindow(ctk.CTk):
             enable_diarization = (model == "gpt-4o-diarize")
             model_name = "gpt-4o-transcribe-diarize" if enable_diarization else "gpt-4o-transcribe"
 
+            # GPT-4o用のプロンプト（短縮版）
+            gpt4o_prompts = {
+                "ja": "これは日本語の会議録音です。専門用語を正確に認識してください。",
+                "zh": "这是中文会议录音。请准确识别专业术语。",
+                "en": "This is an English meeting recording. Please accurately recognize technical terms."
+            }
+            gpt4o_prompt = gpt4o_prompts.get(language, gpt4o_prompts["ja"])
+
             self.transcriber = GPT4oTranscriber(
                 api_key=self.settings.openai_api_key,
                 model_name=model_name,
@@ -306,7 +332,7 @@ class MainWindow(ctk.CTk):
                 enable_diarization=enable_diarization,
                 sample_rate=sample_rate,
                 channels=channels,
-                prompt_template=self.settings.get("transcription.gpt4o.prompt_template", ""),
+                prompt_template=gpt4o_prompt,
                 use_context=self.settings.get("transcription.gpt4o.use_context", False)
             )
 
@@ -691,6 +717,11 @@ class MainWindow(ctk.CTk):
         # 録音システムを再セットアップ
         self._setup_recorder()
 
+        # 言語ラベルを更新
+        language = self.settings.get("transcription.language", "ja")
+        lang_display = {"ja": "日本語", "zh": "中文", "en": "English"}.get(language, "日本語")
+        self.language_label.configure(text=f"{self.locale.get('label_language', '言語')}: {lang_display}")
+
         logger.info("Recorder system reinitialized")
 
     def _toggle_language(self) -> None:
@@ -780,6 +811,11 @@ class MainWindow(ctk.CTk):
         time_str = self._format_timestamp(elapsed)
         self.time_label.configure(text=f"{self.locale.get('label_duration')}: {time_str}")
         self.status_label.configure(text=f"{self.locale.get('label_status')}: {status_text}")
+
+        # 録音言語
+        language = self.settings.get("transcription.language", "ja")
+        lang_display = {"ja": "日本語", "zh": "中文", "en": "English"}.get(language, "日本語")
+        self.language_label.configure(text=f"{self.locale.get('label_language', '言語')}: {lang_display}")
 
         # ボタン
         if self.is_paused:

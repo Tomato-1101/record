@@ -14,6 +14,7 @@
   "status_idle": "待机中",
   "label_duration": "录音时长",
   "label_status": "状态",
+  "label_language": "录音语言",
   "message_copied": "文本已复制到剪贴板",
   "message_no_text": "没有可复制的文本",
   "error_recording_failed": "录音启动失败",
