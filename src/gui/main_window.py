@@ -35,6 +35,12 @@ class MainWindow(ctk.CTk):
         self.transcript_text = ""  # 後方互換性のため保持
         self.output_file_path: Optional[str] = None
 
+        # 録音状態管理
+        self.is_recording = False
+        self.is_paused = False
+        self.test_mode = False  # テストモード
+        self.audio_buffer_for_test = bytearray()  # テストモード用音声バッファ
+
         # 話者カラーマッピング（DIARIZEモデル用）
         self.speaker_colors = [
             "#3B82F6",  # Blue
@@ -164,45 +170,69 @@ class MainWindow(ctk.CTk):
             control_frame,
             text=self.locale.get("btn_start"),
             font=ctk.CTkFont(size=14, weight="bold"),
-            width=150,
+            width=120,
             height=50,
             command=self._start_recording
         )
-        self.start_button.pack(side="left", padx=10, pady=15)
+        self.start_button.pack(side="left", padx=5, pady=15)
+
+        # 一時停止ボタン
+        self.pause_button = ctk.CTkButton(
+            control_frame,
+            text=self.locale.get("btn_pause", "一時停止"),
+            font=ctk.CTkFont(size=14, weight="bold"),
+            width=120,
+            height=50,
+            command=self._pause_recording,
+            state="disabled"
+        )
+        self.pause_button.pack(side="left", padx=5, pady=15)
 
         # 停止ボタン
         self.stop_button = ctk.CTkButton(
             control_frame,
             text=self.locale.get("btn_stop"),
             font=ctk.CTkFont(size=14, weight="bold"),
-            width=150,
+            width=120,
             height=50,
             command=self._stop_recording,
             state="disabled"
         )
-        self.stop_button.pack(side="left", padx=10, pady=15)
+        self.stop_button.pack(side="left", padx=5, pady=15)
 
         # コピーボタン
         self.copy_button = ctk.CTkButton(
             control_frame,
             text=self.locale.get("btn_copy"),
             font=ctk.CTkFont(size=14),
-            width=120,
+            width=100,
             height=50,
             command=self._copy_to_clipboard
         )
-        self.copy_button.pack(side="left", padx=10, pady=15)
+        self.copy_button.pack(side="left", padx=5, pady=15)
 
         # 設定ボタン
         self.settings_button = ctk.CTkButton(
             control_frame,
             text=self.locale.get("btn_settings"),
             font=ctk.CTkFont(size=14),
-            width=120,
+            width=100,
             height=50,
             command=self._open_settings
         )
-        self.settings_button.pack(side="left", padx=10, pady=15)
+        self.settings_button.pack(side="left", padx=5, pady=15)
+
+        # テストモードトグルボタン
+        self.test_mode_button = ctk.CTkButton(
+            control_frame,
+            text=self.locale.get("btn_test_mode_off", "テストモード: OFF"),
+            font=ctk.CTkFont(size=12),
+            width=140,
+            height=50,
+            command=self._toggle_test_mode,
+            fg_color="gray"
+        )
+        self.test_mode_button.pack(side="left", padx=5, pady=15)
 
     def _setup_recorder(self) -> None:
         """録音システムのセットアップ"""
@@ -320,6 +350,10 @@ class MainWindow(ctk.CTk):
             audio_chunk: 音声データ
             timestamp: タイムスタンプ
         """
+        # テストモードの場合、音声データを保存
+        if self.test_mode:
+            self.audio_buffer_for_test.extend(audio_chunk)
+
         if not self.transcriber:
             logger.warning("Transcriber not initialized")
             return
@@ -444,33 +478,65 @@ class MainWindow(ctk.CTk):
         return self.speaker_history[speaker_label]
 
     def _start_recording(self) -> None:
-        """録音開始"""
+        """録音開始または再開"""
         try:
-            # TranscriptBuilderをクリア
-            self.transcript_builder.clear()
-            self.transcript_text = ""
-            self.text_box.delete("1.0", "end")
+            # 一時停止から再開の場合
+            if self.is_paused:
+                self.is_paused = False
+                self.is_recording = True
 
-            # 話者カラーマッピングをクリア
-            self.speaker_color_map.clear()
+                # 録音再開
+                self.recorder.start_recording()
 
-            # 出力ファイルの準備
-            self._prepare_output_file()
+                # UIの更新
+                self.start_button.configure(state="disabled")
+                self.pause_button.configure(state="normal", text=self.locale.get("btn_pause", "一時停止"))
+                self.stop_button.configure(state="normal")
+                self.status_label.configure(
+                    text=f"{self.locale.get('label_status')}: {self.locale.get('status_recording')}"
+                )
 
-            # 録音開始
-            self.recorder.start_recording()
+                # タイマー再開
+                self._update_timer()
 
-            # UIの更新
-            self.start_button.configure(state="disabled")
-            self.stop_button.configure(state="normal")
-            self.status_label.configure(
-                text=f"{self.locale.get('label_status')}: {self.locale.get('status_recording')}"
-            )
+                logger.info("Recording resumed")
 
-            # タイマー開始
-            self._update_timer()
+            # 新規開始の場合
+            else:
+                # テストモード用バッファをクリア
+                if self.test_mode:
+                    self.audio_buffer_for_test.clear()
 
-            logger.info("Recording started")
+                # TranscriptBuilderをクリア
+                self.transcript_builder.clear()
+                self.transcript_text = ""
+                self.text_box.delete("1.0", "end")
+
+                # 話者カラーマッピングをクリア
+                self.speaker_color_map.clear()
+                self.speaker_history.clear()
+                self.last_speaker = None
+
+                # 出力ファイルの準備
+                self._prepare_output_file()
+
+                # 録音開始
+                self.recorder.start_recording()
+                self.is_recording = True
+                self.is_paused = False
+
+                # UIの更新
+                self.start_button.configure(state="disabled")
+                self.pause_button.configure(state="normal")
+                self.stop_button.configure(state="normal")
+                self.status_label.configure(
+                    text=f"{self.locale.get('label_status')}: {self.locale.get('status_recording')}"
+                )
+
+                # タイマー開始
+                self._update_timer()
+
+                logger.info("Recording started")
 
         except Exception as e:
             logger.error(f"Failed to start recording: {e}")
@@ -478,14 +544,42 @@ class MainWindow(ctk.CTk):
                 text=f"{self.locale.get('label_status')}: {self.locale.get('error_recording_failed')}"
             )
 
+    def _pause_recording(self) -> None:
+        """録音一時停止"""
+        try:
+            # 録音一時停止
+            self.recorder.stop_recording()
+            self.is_paused = True
+            self.is_recording = False
+
+            # UIの更新
+            self.start_button.configure(state="normal", text=self.locale.get("btn_resume", "再開"))
+            self.pause_button.configure(state="disabled")
+            self.stop_button.configure(state="normal")
+            self.status_label.configure(
+                text=f"{self.locale.get('label_status')}: {self.locale.get('status_paused', '一時停止中')}"
+            )
+
+            logger.info("Recording paused")
+
+        except Exception as e:
+            logger.error(f"Failed to pause recording: {e}")
+
     def _stop_recording(self) -> None:
-        """録音停止"""
+        """録音完全停止"""
         try:
             # 録音停止
             self.recorder.stop_recording()
+            self.is_recording = False
+            self.is_paused = False
+
+            # テストモードの場合、音声ファイルを保存
+            if self.test_mode and len(self.audio_buffer_for_test) > 0:
+                self._save_audio_file()
 
             # UIの更新
-            self.start_button.configure(state="normal")
+            self.start_button.configure(state="normal", text=self.locale.get("btn_start"))
+            self.pause_button.configure(state="disabled")
             self.stop_button.configure(state="disabled")
             self.status_label.configure(
                 text=f"{self.locale.get('label_status')}: {self.locale.get('status_idle')}"
@@ -612,6 +706,59 @@ class MainWindow(ctk.CTk):
 
         logger.info(f"Language changed to: {new_language}")
 
+    def _toggle_test_mode(self) -> None:
+        """テストモードの切り替え"""
+        self.test_mode = not self.test_mode
+
+        if self.test_mode:
+            self.test_mode_button.configure(
+                text=self.locale.get("btn_test_mode_on", "テストモード: ON"),
+                fg_color="green"
+            )
+            logger.info("Test mode enabled - audio will be saved to output/dev/")
+        else:
+            self.test_mode_button.configure(
+                text=self.locale.get("btn_test_mode_off", "テストモード: OFF"),
+                fg_color="gray"
+            )
+            logger.info("Test mode disabled")
+
+    def _save_audio_file(self) -> None:
+        """テストモード用の音声ファイルを保存"""
+        try:
+            import wave
+            import datetime
+            from pathlib import Path
+
+            # output/devディレクトリを作成
+            dev_dir = Path("output/dev")
+            dev_dir.mkdir(parents=True, exist_ok=True)
+
+            # ファイル名を生成（transcriptと同じタイムスタンプ）
+            if self.output_file_path:
+                # transcriptファイル名からタイムスタンプを抽出
+                transcript_name = Path(self.output_file_path).stem
+                timestamp = transcript_name.replace("transcript_", "")
+                audio_filename = f"audio_{timestamp}.wav"
+            else:
+                # フォールバック
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                audio_filename = f"audio_{timestamp}.wav"
+
+            audio_path = dev_dir / audio_filename
+
+            # WAVファイルとして保存
+            with wave.open(str(audio_path), 'wb') as wav_file:
+                wav_file.setnchannels(1)  # モノラル
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(self.settings.get("audio.sample_rate", 16000))
+                wav_file.writeframes(bytes(self.audio_buffer_for_test))
+
+            logger.info(f"Test audio saved to: {audio_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to save audio file: {e}")
+
     def _refresh_ui(self) -> None:
         """UIテキストを再読み込み"""
         # ウィンドウタイトル
@@ -635,10 +782,18 @@ class MainWindow(ctk.CTk):
         self.status_label.configure(text=f"{self.locale.get('label_status')}: {status_text}")
 
         # ボタン
-        self.start_button.configure(text=self.locale.get("btn_start"))
+        if self.is_paused:
+            self.start_button.configure(text=self.locale.get("btn_resume"))
+        else:
+            self.start_button.configure(text=self.locale.get("btn_start"))
+        self.pause_button.configure(text=self.locale.get("btn_pause"))
         self.stop_button.configure(text=self.locale.get("btn_stop"))
         self.copy_button.configure(text=self.locale.get("btn_copy"))
         self.settings_button.configure(text=self.locale.get("btn_settings"))
+        if self.test_mode:
+            self.test_mode_button.configure(text=self.locale.get("btn_test_mode_on"))
+        else:
+            self.test_mode_button.configure(text=self.locale.get("btn_test_mode_off"))
 
     def cleanup(self) -> None:
         """クリーンアップ"""

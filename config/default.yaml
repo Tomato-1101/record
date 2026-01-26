@@ -26,15 +26,15 @@ transcription:
     chunking_strategy: auto
     model_name: gpt-4o-transcribe-diarize
     response_format: diarized_json
-  language: ja
-  model: gpt-4o-transcribe
+  language: zh
+  model: whisper-groq
   whisper:
     model_name: whisper-large-v3-turbo
     prompt_template: これは日本語の会議録音です。専門用語や固有名詞を正確に認識してください。
     temperature: 0.0
     use_context: true
 ui:
-  language: ja
+  language: zh
   theme: dark
 vad:
   aggressiveness: 1
