@@ -17,6 +17,10 @@ output:
 transcription:
   chunk_duration_sec: 5
   chunk_overlap_sec: 1
+  # 動的チャンク設定（VADベース）
+  min_chunk_sec: 5        # 最小チャンク長（秒）- これより短いチャンクは作成しない
+  max_chunk_sec: 30       # 最大チャンク長（秒）- これを超えたら強制的に区切る（雑音環境対策）
+  silence_threshold_ms: 500  # 無音閾値（ミリ秒）- 無音がこの時間続いたら発話終了と判定
   gpt4o:
     model_name: gpt-4o-transcribe
     response_format: text
@@ -24,7 +28,7 @@ transcription:
     chunking_strategy: auto
     model_name: gpt-4o-transcribe-diarize
     response_format: diarized_json
-  language: zh
+  language: zh-CN
   model: whisper-groq
   whisper:
     model_name: whisper-large-v3-turbo

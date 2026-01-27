@@ -161,7 +161,7 @@ class MainWindow(ctk.CTk):
 
         # 録音言語
         language = self.settings.get("transcription.language", "ja")
-        lang_display = {"ja": "日本語", "zh": "中文", "en": "English"}.get(language, "日本語")
+        lang_display = {"ja": "日本語", "zh-CN": "中文简体", "zh": "中文简体", "en": "English"}.get(language, "日本語")
         self.language_label = ctk.CTkLabel(
             status_frame,
             text=f"{self.locale.get('label_language', '言語')}: {lang_display}",
@@ -253,6 +253,11 @@ class MainWindow(ctk.CTk):
         queue_maxsize = self.settings.get("audio.queue_maxsize", 20)
         chunk_overlap = self.settings.get("transcription.chunk_overlap_sec", 5)
 
+        # 動的チャンク設定
+        min_chunk_sec = self.settings.get("transcription.min_chunk_sec", 5)
+        max_chunk_sec = self.settings.get("transcription.max_chunk_sec", 30)
+        silence_threshold_ms = self.settings.get("transcription.silence_threshold_ms", 500)
+
         # VADは常に有効
         self.buffer_manager = AudioBufferManager(
             chunk_duration_sec=chunk_duration,
@@ -262,7 +267,10 @@ class MainWindow(ctk.CTk):
             vad_enabled=True,  # 常にON
             vad_aggressiveness=vad_aggressiveness,
             queue_maxsize=queue_maxsize,
-            chunk_overlap_sec=chunk_overlap
+            chunk_overlap_sec=chunk_overlap,
+            min_chunk_sec=min_chunk_sec,
+            max_chunk_sec=max_chunk_sec,
+            silence_threshold_ms=silence_threshold_ms
         )
 
         # 録音デバイスの作成
@@ -703,7 +711,7 @@ class MainWindow(ctk.CTk):
 
         # 言語ラベルを更新
         language = self.settings.get("transcription.language", "ja")
-        lang_display = {"ja": "日本語", "zh": "中文", "en": "English"}.get(language, "日本語")
+        lang_display = {"ja": "日本語", "zh-CN": "中文简体", "zh": "中文简体", "en": "English"}.get(language, "日本語")
         self.language_label.configure(text=f"{self.locale.get('label_language', '言語')}: {lang_display}")
 
         logger.info("Recorder system reinitialized")
@@ -798,7 +806,7 @@ class MainWindow(ctk.CTk):
 
         # 録音言語
         language = self.settings.get("transcription.language", "ja")
-        lang_display = {"ja": "日本語", "zh": "中文", "en": "English"}.get(language, "日本語")
+        lang_display = {"ja": "日本語", "zh-CN": "中文简体", "zh": "中文简体", "en": "English"}.get(language, "日本語")
         self.language_label.configure(text=f"{self.locale.get('label_language', '言語')}: {lang_display}")
 
         # ボタン

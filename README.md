@@ -19,7 +19,7 @@ Windows PC向けの長時間（2時間以上）議事録録音・リアルタイ
 - Python 3.8以上
 - マイク（音声入力デバイス）
 
-## インストール
+## インストールと実行
 
 ### 1. リポジトリのクローン
 
@@ -28,50 +28,49 @@ git clone <repository-url>
 cd record
 ```
 
-### 2. 依存パッケージのインストール
+### 2. 実行（Windows）
+
+フォルダ内の `setup.bat` をダブルクリックして実行してください。
+
+1. **環境構築**: 必要なライブラリ（Python仮想環境）が自動的にセットアップされます。
+2. **APIキー設定**: 初回は `.env` ファイルが作成され、メモ帳で開かれます。ご自身のAPIキーを入力して保存してください。
+3. **起動**: 設定完了後、自動的にアプリケーションが起動します。
+
+※ 2回目以降も `setup.bat`（または `run.bat`）を実行するだけで起動できます。
+
+### 手動インストール（Mac/Linux または上級者向け）
 
 ```bash
+# 仮想環境の作成と有効化
+python -m venv venv
+# Windows: venv\Scripts\activate
+# Mac/Linux: source venv/bin/activate
+
+# 依存パッケージのインストール
 pip install -r requirements.txt
-```
 
-**注意**: Windows環境でPyAudioのインストールに失敗する場合は、以下のいずれかの方法を試してください:
-
-- [Unofficial Windows Binaries](https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio)からwhlファイルをダウンロードしてインストール
-- Visual C++ Build Toolsをインストール
-
-### 3. APIキーの設定
-
-`.env.example`を`.env`にコピーし、APIキーを設定します:
-
-```bash
-# Windowsの場合
-copy .env.example .env
-
-# Mac/Linuxの場合
+# APIキーの設定
 cp .env.example .env
+# .envファイルを編集してAPIキーを設定
+
+# 実行
+python src/main.py
 ```
 
-`.env`ファイルを編集し、APIキーを設定:
+### APIキーについて
 
-```env
-# OpenAI API Key (gpt-4o-transcribe / gpt-4o-transcribe-diarize 用)
-OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxx
+以下のサービスからAPIキーを取得して `.env` ファイルに設定してください：
 
-# Groq API Key (Whisper 用 - 無料・高速)
-GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxx
-```
-
-**APIキーの取得方法:**
-- OpenAI: https://platform.openai.com/api-keys
-- Groq: https://console.groq.com/keys
+- **OpenAI API Key**: [https://platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+  - 高精度な文字起こし (`gpt-4o-transcribe`) に使用
+- **Groq API Key**: [https://console.groq.com/keys](https://console.groq.com/keys)
+  - 高速・無料枠のある文字起こし (`whisper-groq`) に使用
 
 ## 使い方
 
 ### アプリケーションの起動
 
-```bash
-python src/main.py
-```
+`setup.bat`（または `run.bat`）を実行してください。
 
 ### 基本操作
 
@@ -95,20 +94,20 @@ python src/main.py
 ```yaml
 # 文字起こし設定
 transcription:
-  chunk_duration_sec: 30  # チャンク間隔（秒）30または60
-  model: "whisper-groq"   # whisper-groq | gpt-4o-transcribe | gpt-4o-diarize
-  language: "ja"          # 文字起こし言語
+  chunk_duration_sec: 30 # チャンク間隔（秒）30または60
+  model: "whisper-groq" # whisper-groq | gpt-4o-transcribe | gpt-4o-diarize
+  language: "ja" # 文字起こし言語
 
 # 音声設定
 audio:
-  sample_rate: 16000  # サンプルレート
-  channels: 1         # チャンネル数（1=モノラル）
+  sample_rate: 16000 # サンプルレート
+  channels: 1 # チャンネル数（1=モノラル）
 
 # 出力設定
 output:
-  directory: "output"   # 出力ディレクトリ
-  format: "txt"         # 出力フォーマット
-  auto_save: true       # 自動保存
+  directory: "output" # 出力ディレクトリ
+  format: "txt" # 出力フォーマット
+  auto_save: true # 自動保存
 ```
 
 ## プロジェクト構造
@@ -141,12 +140,14 @@ record/
 ## 開発ロードマップ
 
 ### Phase 1: MVP（完了）✅
+
 - [x] 基本録音機能
 - [x] チャンク分割・API送信
 - [x] シンプルなテキスト表示GUI
 - [x] 設定ファイル対応
 
 ### Phase 2: 機能拡張（完了）✅
+
 - [x] VAD（Voice Activity Detection）実装
 - [x] 多言語UI（日本語/中国語切り替え）
 - [x] 詳細設定UI
@@ -154,6 +155,7 @@ record/
 - [x] テキスト出力形式改善（タイムスタンプなし、連続出力）
 
 ### Phase 3: 最適化（予定）
+
 - [ ] メモリ最適化
 - [ ] 文字起こし精度向上
 - [ ] マルチスピーカー対応

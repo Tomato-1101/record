@@ -156,7 +156,7 @@ class SettingsDialog(ctk.CTkToplevel):
 
         self.lang_combo = ctk.CTkComboBox(
             lang_frame,
-            values=["日本語 (ja)", "中文 (zh)", "English (en)"],
+            values=["日本語 (ja)", "中文简体 (zh-CN)", "English (en)"],
             state="readonly",
             width=250
         )
@@ -283,7 +283,8 @@ class SettingsDialog(ctk.CTkToplevel):
         language = self.settings.get("transcription.language", "ja")
         lang_map = {
             "ja": "日本語 (ja)",
-            "zh": "中文 (zh)",
+            "zh-CN": "中文简体 (zh-CN)",
+            "zh": "中文简体 (zh-CN)",  # 後方互換性
             "en": "English (en)"
         }
         self.lang_combo.set(lang_map.get(language, "日本語 (ja)"))
@@ -342,8 +343,8 @@ class SettingsDialog(ctk.CTkToplevel):
             lang_text = self.lang_combo.get()
             if "ja" in lang_text:
                 language = "ja"
-            elif "zh" in lang_text:
-                language = "zh"
+            elif "zh-CN" in lang_text:
+                language = "zh-CN"
             else:
                 language = "en"
             self.settings.update("transcription.language", language)
