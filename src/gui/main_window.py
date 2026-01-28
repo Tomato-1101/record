@@ -320,38 +320,6 @@ class MainWindow(ctk.CTk):
                 use_context=False
             )
 
-    def _remove_overlap_text(self, new_text: str) -> str:
-        """
-        オーバーラップによる重複テキストを削除
-
-        Args:
-            new_text: 新しいチャンクのテキスト
-
-        Returns:
-            重複削除後のテキスト
-        """
-        if not self.transcript_text:
-            return new_text
-
-        # 前のテキストの最後の50文字と新しいテキストを比較
-        prev_tail = self.transcript_text[-50:] if len(self.transcript_text) > 50 else self.transcript_text
-
-        # 重複部分を検出（最低5文字以上の一致）
-        for i in range(len(prev_tail), 4, -1):
-            suffix = prev_tail[-i:]
-            if new_text.startswith(suffix):
-                # 重複を削除
-                deduplicated = new_text[i:]
-                if deduplicated:
-                    logger.debug(f"Removed overlap: '{suffix}' from new text")
-                    return deduplicated
-                else:
-                    # 全体が重複している場合は空文字列を返す
-                    logger.debug(f"New text is completely duplicated, skipping")
-                    return ""
-
-        return new_text
-
     def _on_chunk_ready(self, audio_chunk: bytes, timestamp: float) -> None:
         """
         チャンク準備完了時のコールバック
@@ -377,11 +345,8 @@ class MainWindow(ctk.CTk):
                 logger.debug(f"Ignoring short transcription: '{text}'")
                 return
 
-            # オーバーラップによる重複テキストを削除
-            text = self._remove_overlap_text(text)
-            if not text:
-                logger.debug("Text is completely overlapped, skipping")
-                return
+            # 重複テキスト除去機能は無効化（ユーザーの要望）
+            # すべての文字起こし結果を表示する
 
             # TranscriptBuilderにチャンクを追加
             self.transcript_builder.add_chunk(text, timestamp)
