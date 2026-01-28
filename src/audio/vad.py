@@ -6,59 +6,30 @@ import numpy as np
 from typing import Optional
 from src.utils.logger import logger
 
-# グローバル変数（遅延読み込み用）
+# グローバル変数
 _vad_model = None
 _vad_utils = None
-_vad_loaded = False
-_vad_available = None
+SILERO_VAD_AVAILABLE = False
 
-
-def _load_vad_model():
-    """VADモデルを遅延読み込み"""
-    global _vad_model, _vad_utils, _vad_loaded, _vad_available
-
-    if _vad_loaded:
-        return _vad_available
-
-    _vad_loaded = True
-
-    try:
-        import torch
-        import torchaudio
-        torch.set_num_threads(1)
-        logger.info("Loading Silero VAD model...")
-        _vad_model, _vad_utils = torch.hub.load(
-            repo_or_dir='snakers4/silero-vad',
-            model='silero_vad',
-            force_reload=False,
-            onnx=False,
-            verbose=False  # 詳細ログを抑制
-        )
-        logger.info("Silero VAD model loaded successfully")
-        _vad_available = True
-        return True
-    except Exception as e:
-        logger.error(f"Failed to load Silero VAD: {e}")
-        logger.warning("VAD will be disabled. Install with: pip install torch torchaudio")
-        _vad_available = False
-        return False
-
-
-def is_vad_available() -> bool:
-    """VADが利用可能かチェック（モデルもtorchもロードしない）"""
-    global _vad_available
-
-    if _vad_available is not None:
-        return _vad_available
-
-    # importせずにモジュールの存在だけをチェック
-    try:
-        import importlib.util
-        torch_spec = importlib.util.find_spec("torch")
-        torchaudio_spec = importlib.util.find_spec("torchaudio")
-        return torch_spec is not None and torchaudio_spec is not None
-    except Exception:
-        return False
+# 起動時にVADモデルをロード
+try:
+    import torch
+    import torchaudio
+    torch.set_num_threads(1)
+    logger.info("Loading Silero VAD model...")
+    _vad_model, _vad_utils = torch.hub.load(
+        repo_or_dir='snakers4/silero-vad',
+        model='silero_vad',
+        force_reload=False,
+        onnx=False,
+        verbose=False
+    )
+    SILERO_VAD_AVAILABLE = True
+    logger.info("Silero VAD model loaded successfully")
+except Exception as e:
+    SILERO_VAD_AVAILABLE = False
+    logger.error(f"Failed to load Silero VAD: {e}")
+    logger.warning("VAD will be disabled. Install with: pip install torch torchaudio")
 
 
 class VADProcessor:
@@ -74,7 +45,7 @@ class VADProcessor:
         frame_duration_ms: int = 30
     ):
         """
-        VADプロセッサの初期化（モデルは遅延読み込み）
+        VADプロセッサの初期化
 
         Args:
             sample_rate: サンプルレート（8000または16000）
@@ -82,6 +53,11 @@ class VADProcessor:
                           Silero VADではthresholdに変換（0->0.1, 1->0.3, 2->0.5, 3->0.7）
             frame_duration_ms: フレーム長（未使用、互換性のため保持）
         """
+        if not SILERO_VAD_AVAILABLE:
+            logger.warning("Silero VAD is not available. VAD will be disabled.")
+            self.model = None
+            return
+
         # Silero VADは8kまたは16kHzを推奨
         if sample_rate not in [8000, 16000]:
             logger.warning(f"Sample rate {sample_rate}Hz may not be optimal for Silero VAD. Using 16000Hz.")
@@ -94,30 +70,15 @@ class VADProcessor:
         threshold_map = {0: 0.1, 1: 0.3, 2: 0.5, 3: 0.7}
         self.threshold = threshold_map.get(aggressiveness, 0.5)
 
-        # モデルは遅延読み込み
-        self.model = None
-        self._model_loaded = False
+        # グローバルのVADモデルを使用
+        global _vad_model
+        self.model = _vad_model
 
         logger.info(
-            f"VADProcessor initialized (lazy loading): "
+            f"VADProcessor initialized: "
             f"sample_rate={sample_rate}Hz, "
             f"threshold={self.threshold} (aggressiveness={aggressiveness})"
         )
-
-    def _ensure_model_loaded(self) -> bool:
-        """モデルがロードされていることを確認"""
-        if self._model_loaded:
-            return self.model is not None
-
-        self._model_loaded = True
-
-        if not _load_vad_model():
-            self.model = None
-            return False
-
-        global _vad_model
-        self.model = _vad_model
-        return True
 
     def is_speech(self, audio_data: bytes) -> bool:
         """
@@ -129,7 +90,7 @@ class VADProcessor:
         Returns:
             発話が含まれている場合True
         """
-        if not self._ensure_model_loaded():
+        if not self.model or not SILERO_VAD_AVAILABLE:
             return True  # VADが利用できない場合は常にTrueを返す
 
         try:
@@ -170,7 +131,7 @@ class VADProcessor:
         Returns:
             発話信頼度（0.0=無音, 1.0=確実に発話）
         """
-        if not self._ensure_model_loaded():
+        if not self.model or not SILERO_VAD_AVAILABLE:
             return 1.0
 
         try:
@@ -232,7 +193,7 @@ class VADProcessor:
         Returns:
             VADが利用可能な場合True
         """
-        return self._ensure_model_loaded()
+        return SILERO_VAD_AVAILABLE and self.model is not None
 
     def extract_speech_segments(self, audio_data: bytes) -> bytes:
         """
@@ -244,7 +205,7 @@ class VADProcessor:
         Returns:
             発話区間のみを結合した音声データ
         """
-        if not self._ensure_model_loaded():
+        if not self.model or not SILERO_VAD_AVAILABLE:
             # VADが利用できない場合は元のデータをそのまま返す
             return audio_data
 

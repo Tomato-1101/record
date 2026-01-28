@@ -64,14 +64,22 @@ class AudioBufferManager:
         # チャンク処理用キュー
         self.chunk_queue = queue.Queue(maxsize=queue_maxsize)
 
-        # VAD（完全遅延初期化 - 録音開始時に作成）
+        # VAD
         self.vad_enabled = vad_enabled
         self.vad_processor = None
-        self.vad_aggressiveness = vad_aggressiveness
-        self._vad_initialized = False
-
         if vad_enabled:
-            logger.info(f"VAD enabled (aggressiveness: {vad_aggressiveness}, will load on first use)")
+            self.vad_processor = VADProcessor(
+                sample_rate=sample_rate,
+                aggressiveness=vad_aggressiveness
+            )
+            if self.vad_processor.is_available():
+                logger.info(f"VAD enabled (aggressiveness: {vad_aggressiveness})")
+            else:
+                logger.error(
+                    "VAD requested but Silero VAD is not available! "
+                    "Install with: pip install torch torchaudio"
+                )
+                self.vad_enabled = False
 
         # 統計情報
         self.total_chunks_processed = 0
@@ -139,34 +147,11 @@ class AudioBufferManager:
             return 0.0
         return time.time() - self.start_time
 
-    def _ensure_vad_initialized(self) -> None:
-        """VADを初期化（初回のみ）"""
-        if self._vad_initialized or not self.vad_enabled:
-            return
-
-        self._vad_initialized = True
-
-        try:
-            logger.info("Initializing VAD processor...")
-            self.vad_processor = VADProcessor(
-                sample_rate=self.sample_rate,
-                aggressiveness=self.vad_aggressiveness
-            )
-            logger.info("VAD processor initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize VAD: {e}")
-            logger.warning("VAD will be disabled")
-            self.vad_enabled = False
-            self.vad_processor = None
-
     def start_processing(self) -> None:
         """チャンク処理スレッドを開始"""
         if self.is_processing:
             logger.warning("Processing already started")
             return
-
-        # VADを初期化（初回のみ）
-        self._ensure_vad_initialized()
 
         self.is_processing = True
         self.start_time = time.time()
