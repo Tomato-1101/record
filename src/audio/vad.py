@@ -2,25 +2,61 @@
 VAD (Voice Activity Detection) モジュール
 Silero VAD を使用した音声区間検出
 """
-try:
-    import torch
-    import torchaudio
-    torch.set_num_threads(1)
-    model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', force_reload=False, onnx=False)
-    (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = utils
-    SILERO_VAD_AVAILABLE = True
-    print("[VAD] Silero VAD successfully loaded")
-except Exception as e:
-    SILERO_VAD_AVAILABLE = False
-    model = None
-    utils = None
-    VADIterator = None
-    print(f"[VAD] ERROR: Silero VAD not available: {e}")
-    print("[VAD] Install with: pip install silero-vad torch torchaudio")
-
 import numpy as np
 from typing import Optional
 from src.utils.logger import logger
+
+# グローバル変数（遅延読み込み用）
+_vad_model = None
+_vad_utils = None
+_vad_loaded = False
+_vad_available = None
+
+
+def _load_vad_model():
+    """VADモデルを遅延読み込み"""
+    global _vad_model, _vad_utils, _vad_loaded, _vad_available
+
+    if _vad_loaded:
+        return _vad_available
+
+    _vad_loaded = True
+
+    try:
+        import torch
+        import torchaudio
+        torch.set_num_threads(1)
+        logger.info("Loading Silero VAD model...")
+        _vad_model, _vad_utils = torch.hub.load(
+            repo_or_dir='snakers4/silero-vad',
+            model='silero_vad',
+            force_reload=False,
+            onnx=False,
+            verbose=False  # 詳細ログを抑制
+        )
+        logger.info("Silero VAD model loaded successfully")
+        _vad_available = True
+        return True
+    except Exception as e:
+        logger.error(f"Failed to load Silero VAD: {e}")
+        logger.warning("VAD will be disabled. Install with: pip install torch torchaudio")
+        _vad_available = False
+        return False
+
+
+def is_vad_available() -> bool:
+    """VADが利用可能かチェック（モデルはロードしない）"""
+    global _vad_available
+
+    if _vad_available is not None:
+        return _vad_available
+
+    try:
+        import torch
+        import torchaudio
+        return True  # インストールされている
+    except ImportError:
+        return False
 
 
 class VADProcessor:
@@ -36,7 +72,7 @@ class VADProcessor:
         frame_duration_ms: int = 30
     ):
         """
-        VADプロセッサの初期化
+        VADプロセッサの初期化（モデルは遅延読み込み）
 
         Args:
             sample_rate: サンプルレート（8000または16000）
@@ -44,12 +80,6 @@ class VADProcessor:
                           Silero VADではthresholdに変換（0->0.1, 1->0.3, 2->0.5, 3->0.7）
             frame_duration_ms: フレーム長（未使用、互換性のため保持）
         """
-        if not SILERO_VAD_AVAILABLE:
-            logger.warning("Silero VAD is not installed. VAD will be disabled.")
-            self.model = None
-            self.vad_iterator = None
-            return
-
         # Silero VADは8kまたは16kHzを推奨
         if sample_rate not in [8000, 16000]:
             logger.warning(f"Sample rate {sample_rate}Hz may not be optimal for Silero VAD. Using 16000Hz.")
@@ -62,21 +92,30 @@ class VADProcessor:
         threshold_map = {0: 0.1, 1: 0.3, 2: 0.5, 3: 0.7}
         self.threshold = threshold_map.get(aggressiveness, 0.5)
 
-        # Silero VADモデルとイテレータ
-        self.model = model
-        self.vad_iterator = VADIterator(
-            model,
-            threshold=self.threshold,
-            sampling_rate=sample_rate,
-            min_silence_duration_ms=100,
-            speech_pad_ms=30
-        )
+        # モデルは遅延読み込み
+        self.model = None
+        self._model_loaded = False
 
         logger.info(
-            f"VADProcessor initialized with Silero VAD: "
+            f"VADProcessor initialized (lazy loading): "
             f"sample_rate={sample_rate}Hz, "
             f"threshold={self.threshold} (aggressiveness={aggressiveness})"
         )
+
+    def _ensure_model_loaded(self) -> bool:
+        """モデルがロードされていることを確認"""
+        if self._model_loaded:
+            return self.model is not None
+
+        self._model_loaded = True
+
+        if not _load_vad_model():
+            self.model = None
+            return False
+
+        global _vad_model
+        self.model = _vad_model
+        return True
 
     def is_speech(self, audio_data: bytes) -> bool:
         """
@@ -88,14 +127,18 @@ class VADProcessor:
         Returns:
             発話が含まれている場合True
         """
-        if not self.model or not SILERO_VAD_AVAILABLE:
-            # VADが利用できない場合は常にTrueを返す
-            return True
+        if not self._ensure_model_loaded():
+            return True  # VADが利用できない場合は常にTrueを返す
 
         try:
+            global _vad_utils
+            get_speech_timestamps = _vad_utils[0]
+
             # bytes (int16) -> float32 numpy array -> torch tensor
             audio_int16 = np.frombuffer(audio_data, dtype=np.int16)
-            audio_float32 = audio_int16.astype(np.float32) / 32768.0  # normalize to [-1, 1]
+            audio_float32 = audio_int16.astype(np.float32) / 32768.0
+
+            import torch
             audio_tensor = torch.from_numpy(audio_float32)
 
             # Silero VADで発話タイムスタンプを取得
@@ -125,13 +168,18 @@ class VADProcessor:
         Returns:
             発話信頼度（0.0=無音, 1.0=確実に発話）
         """
-        if not self.model or not SILERO_VAD_AVAILABLE:
+        if not self._ensure_model_loaded():
             return 1.0
 
         try:
+            global _vad_utils
+            get_speech_timestamps = _vad_utils[0]
+
             # bytes (int16) -> float32 numpy array -> torch tensor
             audio_int16 = np.frombuffer(audio_data, dtype=np.int16)
             audio_float32 = audio_int16.astype(np.float32) / 32768.0
+
+            import torch
             audio_tensor = torch.from_numpy(audio_float32)
 
             # 発話タイムスタンプを取得
@@ -165,23 +213,11 @@ class VADProcessor:
         Args:
             aggressiveness: VAD感度（0-3）
         """
-        if not self.model or not SILERO_VAD_AVAILABLE:
-            return
-
         if 0 <= aggressiveness <= 3:
             self.aggressiveness = aggressiveness
             # aggressivenessをthresholdに変換
             threshold_map = {0: 0.1, 1: 0.3, 2: 0.5, 3: 0.7}
             self.threshold = threshold_map.get(aggressiveness, 0.5)
-
-            # VADイテレータを再作成
-            self.vad_iterator = VADIterator(
-                self.model,
-                threshold=self.threshold,
-                sampling_rate=self.sample_rate,
-                min_silence_duration_ms=100,
-                speech_pad_ms=30
-            )
 
             logger.info(f"VAD threshold set to {self.threshold} (aggressiveness={aggressiveness})")
         else:
@@ -194,7 +230,7 @@ class VADProcessor:
         Returns:
             VADが利用可能な場合True
         """
-        return SILERO_VAD_AVAILABLE and self.model is not None
+        return self._ensure_model_loaded()
 
     def extract_speech_segments(self, audio_data: bytes) -> bytes:
         """
@@ -206,17 +242,19 @@ class VADProcessor:
         Returns:
             発話区間のみを結合した音声データ
         """
-        if not self.model or not SILERO_VAD_AVAILABLE:
+        if not self._ensure_model_loaded():
             # VADが利用できない場合は元のデータをそのまま返す
             return audio_data
 
         try:
+            global _vad_utils
+            get_speech_timestamps = _vad_utils[0]
+
             # bytes (int16) -> float32 numpy array -> torch tensor
-            # frombufferはゼロコピー（読み取り専用ビュー）
             audio_int16 = np.frombuffer(audio_data, dtype=np.int16)
-            # 正規化（コピーは避けられないが、明示的にメモリ管理）
             audio_float32 = audio_int16.astype(np.float32) / 32768.0
-            # torch.from_numpyはゼロコピー（メモリ共有）
+
+            import torch
             audio_tensor = torch.from_numpy(audio_float32)
 
             # 発話タイムスタンプを取得
@@ -253,7 +291,7 @@ class VADProcessor:
             extracted_audio = b''.join(speech_segments)
 
             # ログ出力
-            original_duration = len(audio_data) / (self.sample_rate * 2)  # 16-bit = 2 bytes
+            original_duration = len(audio_data) / (self.sample_rate * 2)
             extracted_duration = len(extracted_audio) / (self.sample_rate * 2)
             reduction_ratio = (1 - extracted_duration / original_duration) * 100 if original_duration > 0 else 0
 

@@ -64,20 +64,21 @@ class AudioBufferManager:
         # チャンク処理用キュー
         self.chunk_queue = queue.Queue(maxsize=queue_maxsize)
 
-        # VAD
+        # VAD（遅延初期化）
         self.vad_enabled = vad_enabled
         self.vad_processor = None
         if vad_enabled:
-            self.vad_processor = VADProcessor(
-                sample_rate=sample_rate,
-                aggressiveness=vad_aggressiveness
-            )
-            if self.vad_processor.is_available():
-                logger.info(f"VAD enabled (aggressiveness: {vad_aggressiveness})")
+            from src.audio.vad import is_vad_available
+            if is_vad_available():
+                self.vad_processor = VADProcessor(
+                    sample_rate=sample_rate,
+                    aggressiveness=vad_aggressiveness
+                )
+                logger.info(f"VAD enabled (aggressiveness: {vad_aggressiveness}, lazy loading)")
             else:
                 logger.error(
-                    "VAD requested but webrtcvad is not available! "
-                    "Install with: pip install webrtcvad"
+                    "VAD requested but torch/torchaudio is not available! "
+                    "Install with: pip install torch torchaudio"
                 )
                 self.vad_enabled = False
 

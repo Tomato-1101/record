@@ -3,11 +3,15 @@
 エントリーポイント（ターミナルなし起動用）
 """
 import sys
+import os
 from pathlib import Path
 
 # プロジェクトルートをパスに追加
-project_root = Path(__file__).parent
+project_root = Path(__file__).parent.absolute()
 sys.path.insert(0, str(project_root))
+
+# カレントディレクトリをプロジェクトルートに変更
+os.chdir(str(project_root))
 
 from src.utils.logger import setup_logger
 from src.config.settings import init_settings, get_settings
