@@ -45,17 +45,19 @@ def _load_vad_model():
 
 
 def is_vad_available() -> bool:
-    """VADが利用可能かチェック（モデルはロードしない）"""
+    """VADが利用可能かチェック（モデルもtorchもロードしない）"""
     global _vad_available
 
     if _vad_available is not None:
         return _vad_available
 
+    # importせずにモジュールの存在だけをチェック
     try:
-        import torch
-        import torchaudio
-        return True  # インストールされている
-    except ImportError:
+        import importlib.util
+        torch_spec = importlib.util.find_spec("torch")
+        torchaudio_spec = importlib.util.find_spec("torchaudio")
+        return torch_spec is not None and torchaudio_spec is not None
+    except Exception:
         return False
 
 
