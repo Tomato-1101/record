@@ -28,16 +28,13 @@ class AudioBufferManager:
         vad_enabled: bool = False,
         vad_aggressiveness: int = 2,
         queue_maxsize: int = 20,
-        chunk_overlap_sec: int = 5,
-        min_chunk_sec: int = 5,
-        max_chunk_sec: int = 30,
-        silence_threshold_ms: int = 500
+        chunk_overlap_sec: int = 5
     ):
         """
         バッファマネージャの初期化
 
         Args:
-            chunk_duration_sec: チャンク間隔（秒）- 動的チャンク使用時は無視
+            chunk_duration_sec: チャンク間隔（秒）
             sample_rate: サンプルレート
             channels: チャンネル数
             on_chunk_ready: チャンク準備完了時のコールバック関数
@@ -45,25 +42,15 @@ class AudioBufferManager:
             vad_aggressiveness: VAD感度（0-3）
             queue_maxsize: キューの最大サイズ
             chunk_overlap_sec: チャンクオーバーラップ（秒）
-            min_chunk_sec: 最小チャンク長（秒）- これより短いチャンクは作成しない
-            max_chunk_sec: 最大チャンク長（秒）- これを超えたら強制的に区切る
-            silence_threshold_ms: 無音閾値（ミリ秒）- 無音がこの時間続いたら発話終了と判定
         """
         self.chunk_duration_sec = chunk_duration_sec
         self.sample_rate = sample_rate
         self.channels = channels
         self.on_chunk_ready = on_chunk_ready
 
-        # 動的チャンク設定
-        self.min_chunk_sec = min_chunk_sec
-        self.max_chunk_sec = max_chunk_sec
-        self.silence_threshold_ms = silence_threshold_ms
-
         # チャンクサイズ（バイト数）
         # 16bit (2 bytes) * sample_rate * channels * duration
         self.chunk_size_bytes = 2 * sample_rate * channels * chunk_duration_sec
-        self.min_chunk_size_bytes = 2 * sample_rate * channels * min_chunk_sec
-        self.max_chunk_size_bytes = 2 * sample_rate * channels * max_chunk_sec
 
         # オーバーラップ設定
         self.overlap_duration_sec = chunk_overlap_sec
@@ -73,10 +60,6 @@ class AudioBufferManager:
         # バッファ
         self.buffer = bytearray()
         self.buffer_lock = threading.Lock()
-
-        # 動的チャンク用の状態管理
-        self.is_speaking = False
-        self.silence_duration_ms = 0
 
         # チャンク処理用キュー
         self.chunk_queue = queue.Queue(maxsize=queue_maxsize)
@@ -90,11 +73,11 @@ class AudioBufferManager:
                 aggressiveness=vad_aggressiveness
             )
             if self.vad_processor.is_available():
-                logger.info(f"VAD enabled (aggressiveness: {vad_aggressiveness}) - Dynamic chunking active")
+                logger.info(f"VAD enabled (aggressiveness: {vad_aggressiveness})")
             else:
                 logger.error(
-                    "VAD requested but Silero VAD is not available! "
-                    "Install with: pip install silero-vad torch torchaudio"
+                    "VAD requested but webrtcvad is not available! "
+                    "Install with: pip install webrtcvad"
                 )
                 self.vad_enabled = False
 
@@ -109,15 +92,15 @@ class AudioBufferManager:
 
         logger.info(
             f"AudioBufferManager initialized: "
-            f"min_chunk={min_chunk_sec}s, max_chunk={max_chunk_sec}s, "
-            f"silence_threshold={silence_threshold_ms}ms, "
+            f"chunk_duration={chunk_duration_sec}s, "
             f"sample_rate={sample_rate}Hz, "
+            f"chunk_size={self.chunk_size_bytes} bytes, "
             f"vad_enabled={vad_enabled}"
         )
 
     def add_audio_data(self, audio_data: bytes) -> None:
         """
-        音声データをバッファに追加（動的チャンク境界を使用）
+        音声データをバッファに追加
 
         Args:
             audio_data: 音声データ（bytes）
@@ -125,87 +108,32 @@ class AudioBufferManager:
         with self.buffer_lock:
             self.buffer.extend(audio_data)
 
-            # 動的チャンク境界の判定（VAD有効時）
-            if self.vad_enabled and self.vad_processor:
-                # VADでフレームを処理
-                vad_result = self.vad_processor.process_frame(audio_data, self.silence_threshold_ms)
+            # チャンクサイズに達したら分割
+            while len(self.buffer) >= self.chunk_size_bytes:
+                # 前チャンクのオーバーラップを含める
+                chunk_with_overlap = bytes(self.previous_overlap + self.buffer[:self.chunk_size_bytes])
 
-                # フレーム長を計算（ミリ秒）
-                frame_duration_ms = len(audio_data) / (self.sample_rate * 2) * 1000
+                # 次回用のオーバーラップを保存（最後のN秒）
+                if self.overlap_size_bytes > 0:
+                    overlap_start = max(0, self.chunk_size_bytes - self.overlap_size_bytes)
+                    self.previous_overlap = self.buffer[overlap_start:self.chunk_size_bytes]
 
-                # 発話状態を更新
-                if vad_result == "speech":
-                    self.is_speaking = True
-                    self.silence_duration_ms = 0
-                elif vad_result == "silence":
-                    if self.is_speaking:
-                        self.silence_duration_ms += frame_duration_ms
-                elif vad_result == "speech_end":
-                    # 発話終了を検出
-                    self.is_speaking = False
-                    self.silence_duration_ms = 0
+                # インプレース削除でメモリコピーを削減
+                del self.buffer[:self.chunk_size_bytes]
 
-                # バッファの現在の長さ（秒）
-                buffer_duration = len(self.buffer) / (self.sample_rate * 2)
+                # チャンクのタイムスタンプ（録音開始からの経過時間）
+                timestamp = self._get_current_timestamp()
 
-                should_split = False
-
-                # 最大チャンク長を超えたら強制的に区切る（雑音環境対策）
-                if len(self.buffer) >= self.max_chunk_size_bytes:
-                    should_split = True
-                    logger.info(f"Forced chunk split at {buffer_duration:.1f}s (max reached)")
-
-                # 最小長を超えていて、発話終了が検出されたら区切る
-                elif len(self.buffer) >= self.min_chunk_size_bytes and vad_result == "speech_end":
-                    should_split = True
-                    logger.info(f"Speech end detected at {buffer_duration:.1f}s")
-
-                if should_split:
-                    self._create_chunk()
-                    self.silence_duration_ms = 0
-
-            else:
-                # VAD無効時は固定長チャンク（従来の動作）
-                while len(self.buffer) >= self.chunk_size_bytes:
-                    self._create_chunk()
-
-    def _create_chunk(self) -> None:
-        """
-        現在のバッファからチャンクを作成してキューに追加
-        """
-        # 現在のバッファ全体をチャンクとして使用（動的チャンク）
-        chunk_size = len(self.buffer)
-
-        # 前チャンクのオーバーラップを含める
-        chunk_with_overlap = bytes(self.previous_overlap + self.buffer[:chunk_size])
-
-        # 次回用のオーバーラップを保存（最後のN秒）
-        if self.overlap_size_bytes > 0 and chunk_size >= self.overlap_size_bytes:
-            overlap_start = chunk_size - self.overlap_size_bytes
-            self.previous_overlap = self.buffer[overlap_start:chunk_size]
-        else:
-            # チャンクが短い場合は全体を保存
-            self.previous_overlap = self.buffer[:chunk_size]
-
-        # インプレース削除でメモリコピーを削減
-        del self.buffer[:chunk_size]
-
-        # チャンクのタイムスタンプ（録音開始からの経過時間）
-        timestamp = self._get_current_timestamp()
-
-        # チャンクの長さ（秒）
-        chunk_duration = len(chunk_with_overlap) / (self.sample_rate * 2)
-
-        try:
-            self.chunk_queue.put_nowait((chunk_with_overlap, timestamp))
-            logger.debug(f"Chunk added to queue: {chunk_duration:.1f}s ({len(chunk_with_overlap)} bytes) at {timestamp:.2f}s")
-        except queue.Full:
-            logger.warning("Chunk queue is full, dropping oldest chunk")
-            try:
-                self.chunk_queue.get_nowait()  # 古いチャンクを削除
-                self.chunk_queue.put_nowait((chunk_with_overlap, timestamp))
-            except queue.Empty:
-                pass
+                try:
+                    self.chunk_queue.put_nowait((chunk_with_overlap, timestamp))
+                    logger.debug(f"Chunk added to queue: {len(chunk_with_overlap)} bytes at {timestamp:.2f}s")
+                except queue.Full:
+                    logger.warning("Chunk queue is full, dropping oldest chunk")
+                    try:
+                        self.chunk_queue.get_nowait()  # 古いチャンクを削除
+                        self.chunk_queue.put_nowait((chunk_with_overlap, timestamp))
+                    except queue.Empty:
+                        pass
 
     def _get_current_timestamp(self) -> float:
         """

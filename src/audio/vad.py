@@ -72,11 +72,6 @@ class VADProcessor:
             speech_pad_ms=30
         )
 
-        # ストリーミングVAD用の状態管理
-        self.is_speaking = False
-        self.silence_frames = 0
-        self.speech_frames = 0
-
         logger.info(
             f"VADProcessor initialized with Silero VAD: "
             f"sample_rate={sample_rate}Hz, "
@@ -200,70 +195,6 @@ class VADProcessor:
             VADが利用可能な場合True
         """
         return SILERO_VAD_AVAILABLE and self.model is not None
-
-    def process_frame(self, audio_frame: bytes, silence_threshold_ms: int = 500) -> str:
-        """
-        リアルタイムで音声フレームを処理し、発話状態を返す
-
-        Args:
-            audio_frame: 音声データ（bytes）
-            silence_threshold_ms: 無音閾値（ミリ秒）
-
-        Returns:
-            "speech" | "silence" | "speech_end"
-        """
-        if not self.model or not SILERO_VAD_AVAILABLE or not self.vad_iterator:
-            # VADが利用できない場合は常に発話中として扱う
-            return "speech"
-
-        try:
-            # bytes (int16) -> float32 numpy array -> torch tensor
-            audio_int16 = np.frombuffer(audio_frame, dtype=np.int16)
-            audio_float32 = audio_int16.astype(np.float32) / 32768.0
-            audio_tensor = torch.from_numpy(audio_float32)
-
-            # VADIteratorでフレームを処理
-            speech_dict = self.vad_iterator(audio_tensor, return_seconds=False)
-
-            # speech_dictが空でない = 発話区間が検出された
-            if speech_dict:
-                self.is_speaking = True
-                self.silence_frames = 0
-                self.speech_frames += 1
-                return "speech"
-            else:
-                # 無音フレーム
-                self.silence_frames += 1
-
-                # フレーム長を計算（ミリ秒）
-                frame_duration_ms = len(audio_frame) / (self.sample_rate * 2) * 1000
-
-                # 無音が閾値を超えた場合
-                if self.is_speaking and (self.silence_frames * frame_duration_ms >= silence_threshold_ms):
-                    self.is_speaking = False
-                    self.speech_frames = 0
-                    return "speech_end"
-
-                return "silence"
-
-        except Exception as e:
-            logger.error(f"VAD process_frame error: {e}")
-            return "speech"  # エラー時は発話中として扱う
-
-    def reset_state(self) -> None:
-        """VAD状態をリセット"""
-        if self.vad_iterator and SILERO_VAD_AVAILABLE:
-            # VADIteratorを再作成してリセット
-            self.vad_iterator = VADIterator(
-                self.model,
-                threshold=self.threshold,
-                sampling_rate=self.sample_rate,
-                min_silence_duration_ms=100,
-                speech_pad_ms=30
-            )
-        self.is_speaking = False
-        self.silence_frames = 0
-        self.speech_frames = 0
 
     def extract_speech_segments(self, audio_data: bytes) -> bytes:
         """

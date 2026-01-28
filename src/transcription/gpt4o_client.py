@@ -46,7 +46,8 @@ class GPT4oTranscriber:
         """
         self.api_key = api_key
         self.model_name = model_name
-        self.language = language
+        # 言語コードを正規化（zh-CN → zh）
+        self.language = self._normalize_language_code(language)
         self.enable_diarization = enable_diarization
         self.max_retries = max_retries
         self.sample_rate = sample_rate
@@ -66,8 +67,23 @@ class GPT4oTranscriber:
 
         logger.info(
             f"GPT4oTranscriber initialized: "
-            f"model={model_name}, diarization={enable_diarization}"
+            f"model={model_name}, language={self.language}, diarization={enable_diarization}"
         )
+
+    def _normalize_language_code(self, language: str) -> str:
+        """
+        言語コードを正規化
+
+        Args:
+            language: 言語コード（例: zh-CN, zh, ja）
+
+        Returns:
+            正規化された言語コード
+        """
+        # zh-CN を zh に変換（APIの互換性のため）
+        if language.startswith("zh"):
+            return "zh"
+        return language
 
     def _convert_to_wav(self, pcm_data: bytes) -> bytes:
         """

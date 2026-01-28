@@ -47,7 +47,8 @@ class WhisperTranscriber:
         """
         self.api_key = api_key
         self.model_name = model_name
-        self.language = language
+        # 言語コードを正規化（Whisper APIは zh-CN をサポートしていない）
+        self.language = self._normalize_language_code(language)
         self.temperature = temperature
         self.max_retries = max_retries
         self.sample_rate = sample_rate
@@ -66,8 +67,23 @@ class WhisperTranscriber:
 
         logger.info(
             f"WhisperTranscriber initialized: "
-            f"model={model_name}, language={language}"
+            f"model={model_name}, language={self.language}"
         )
+
+    def _normalize_language_code(self, language: str) -> str:
+        """
+        言語コードをWhisper API用に正規化
+
+        Args:
+            language: 言語コード（例: zh-CN, zh, ja）
+
+        Returns:
+            正規化された言語コード
+        """
+        # Whisper APIは zh-CN をサポートしていないので zh に変換
+        if language.startswith("zh"):
+            return "zh"
+        return language
 
     def _convert_to_wav(self, pcm_data: bytes) -> bytes:
         """
