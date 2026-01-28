@@ -165,12 +165,50 @@ record/
 
 ## トラブルシューティング
 
-### PyAudioのインストールエラー
+### PyAudioのインストールエラー（詳細ガイド）
 
-Windows環境で `pip install pyaudio` が失敗する場合:
+Windows環境で `pip install pyaudio` が「Microsoft Visual C++ 14.0 is required」などのエラーで失敗する場合、以下の手順で解決してください。
 
-1. [Unofficial Windows Binaries](https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio)から対応するwhlファイルをダウンロード
-2. `pip install PyAudio‑0.2.13‑cp3XX‑cp3XX‑winXX.whl` でインストール
+#### 方法1: コンパイル済みファイル（.whl）を手動でインストール（推奨）
+
+これが最も確実な方法です。
+
+**ステップ 1: Pythonのバージョンとビット数を確認**
+コマンドプロンプトで以下を実行して確認してください：
+
+```bash
+python --version
+# 例: Python 3.12.0 -> "cp312" に対応
+
+python -c "import struct; print(struct.calcsize('P') * 8)"
+# 例: 64 -> "win_amd64" に対応
+# 例: 32 -> "win32" に対応
+```
+
+**ステップ 2: ファイルをダウンロード**
+
+1. [Unofficial Windows Binaries for Python Extension Packages](https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio) にアクセス（または「python whl pyaudio」で検索してGitHubのビルド済みリポジトリを探す）。
+2. ステップ1で確認した環境に合うファイルをダウンロードします。
+   - Python 3.12, 64bitの場合: `PyAudio‑0.2.13‑cp312‑cp312‑win_amd64.whl`
+   - Python 3.11, 64bitの場合: `PyAudio‑0.2.13‑cp311‑cp311‑win_amd64.whl`
+
+**ステップ 3: インストール**
+ダウンロードしたファイルがあるフォルダでコマンドを実行します：
+
+```bash
+# 仮想環境が有効であることを確認してください (venv)
+pip install PyAudio‑0.2.13‑cp312‑cp312‑win_amd64.whl
+```
+
+※ファイル名はダウンロードしたものに合わせて変更してください。
+
+#### 方法2: Build Toolsを入れる（上級者向け）
+
+Visual Studio Installer から「C++によるデスクトップ開発」をインストールすることで、ソースコードからコンパイルできるようになりますが、数GBの容量が必要です。
+
+#### 方法3: WinGetを使用（Python自体を管理している場合）
+
+Anacondaや特定のディストリビューションを使用している場合は、`conda install pyaudio` が使える場合があります。
 
 ### APIエラー
 
